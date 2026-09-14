@@ -4,14 +4,9 @@ services:
     runtime: node
     plan: free
     buildCommand: npm install
-    startCommand: node server/server-pg.js
+    startCommand: node server/server-sqlite.js
     envVars:
       - key: NODE_VERSION
         value: 20.0.0
-      - key: DATABASE_SSL
-        value: "false"
       - key: HOST
         value: "0.0.0.0"
-  - type: postgres
-    name: ipk-db
-    plan: free
