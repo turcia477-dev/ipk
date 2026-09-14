@@ -164,7 +164,8 @@ function notifyFriends(userId, event, payload) {
 }
 
 app.get("/", (req, res) => res.sendFile(path.join(PUBLIC_DIR, "index.html")));
-app.get("/api/status", (req, res) => res.json({ ok: true, server: "ИПК", time: new Date().toISOString() }));
+app.get("/api/status", (req, res) => res.json({ ok: true, server: "ИПК", version: "2.1.1", db: "in-memory-js", time: new Date().toISOString() }));
+app.get("/api/health", (req, res) => res.json({ ok: true, status: "healthy", db: "in-memory-js", uptime: process.uptime() }));
 
 app.post("/api/register", authLimiter, async (req, res) => {
     try {
