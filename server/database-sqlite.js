@@ -287,8 +287,8 @@ const db = {
         
         // SELECT u.id, u.username, u.avatar, ... — friends list OR user search
         if (sql_lower.startsWith("select u.id, u.username, u.avatar")) {
-            // Check if this is the friends list query (contains "FROM friends f")
-            if (sql_lower.includes("from friends f") || sql_lower.includes("from friends as f") || sql_lower.includes("from friends")) {
+            // Friends list query has "u.last_seen" in SELECT; search query has "CASE" instead
+            if (sql_lower.includes("u.last_seen")) {
                 // Friends list query
                 const result = [];
                 for (const f of friends.values()) {
@@ -389,6 +389,6 @@ const db = {
 };
 
 const dbReady = Promise.resolve(db);
-console.log("In-memory JS database ready v2.2");
+console.log("In-memory JS database ready v2.2.1");
 
 module.exports = { db, dbReady };
