@@ -1,22 +1,11 @@
 "use strict";
 
 const initSqlJs = require("sql.js");
-const fs = require("fs");
-const path = require("path");
-
-const dataDir = process.env.IPK_DATA_DIR || "/tmp/ipk-data";
-if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
-const dbPath = path.join(dataDir, "ipk.db");
 
 let db = null;
-let saveTimer = null;
 
 const initDB = initSqlJs().then((SQL) => {
-    let buffer = null;
-    if (fs.existsSync(dbPath)) {
-        buffer = fs.readFileSync(dbPath);
-    }
-    db = new SQL.Database(buffer);
+    db = new Database(); // чисто в памяти, без файла
     
     db.run(`
         CREATE TABLE IF NOT EXISTS users (
@@ -85,32 +74,21 @@ const initDB = initSqlJs().then((SQL) => {
     db.run("CREATE INDEX IF NOT EXISTS idx_messages_sender_receiver_id ON messages(sender_id, receiver_id, id);");
     db.run("CREATE INDEX IF NOT EXISTS idx_messages_unread ON messages(receiver_id, sender_id, is_read, id);");
     
-    db.run("DELETE FROM sessions WHERE expires_at IS NULL OR expires_at <= datetime('now')");
-    
-    saveDB();
-    console.log("SQLite (sql.js): схема готова, БД в", dbPath);
+    console.log("SQLite (in-memory): схема готова");
     return db;
 });
 
-function saveDB() {
-    if (!db) return;
-    if (saveTimer) clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => {
-        try {
-            const data = db.export();
-            fs.writeFileSync(dbPath, Buffer.from(data));
-        } catch (e) {
-            console.error("DB SAVE ERROR:", e.message);
-        }
-    }, 2000);
-}
-
 const dbWrapper = {
     run(sql, params = []) {
-        db.run(sql, params);
-        saveDB();
-        const result = db.getChanges();
-        return { changes: result, lastInsertRowid: db.exec("SELECT last_insert_rowid()")[0].values[0][0] };
+        try {
+            db.run(sql, params);
+            const changes = db.getChanges();
+            const lastId = db.exec("SELECT last_insert_rowid()")[0].values[0][0];
+            return { changes: changes, lastInsertRowid: lastId };
+        } catch (e) {
+            console.error("DB RUN ERROR:", e.message, sql);
+            throw e;
+        }
     },
     get(sql, params = []) {
         const stmt = db.prepare(sql);
@@ -132,13 +110,7 @@ const dbWrapper = {
         stmt.free();
         return rows;
     },
-    saveNow() {
-        if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
-        if (db) {
-            const data = db.export();
-            fs.writeFileSync(dbPath, Buffer.from(data));
-        }
-    }
+    saveNow() { /* noop - in memory */ }
 };
 
 module.exports = { db: dbWrapper, dbReady: initDB };
