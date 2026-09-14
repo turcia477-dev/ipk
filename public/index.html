@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#080b12">
+    <meta name="description" content="ИПК — приватный мессенджер для своего круга">
+    <title>ИПК — свой круг</title>
+    <link rel="stylesheet" href="/style.css?v=4">
+</head>
+<body data-theme="midnight">
+    <div class="noise" aria-hidden="true"></div>
+
+    <section class="auth-screen" id="authScreen" aria-label="Авторизация">
+        <div class="orb orb-one" aria-hidden="true"></div>
+        <div class="orb orb-two" aria-hidden="true"></div>
+        <div class="orb orb-three" aria-hidden="true"></div>
+
+        <div class="auth-shell">
+            <div class="auth-story">
+                <div class="brand brand-large">
+                    <span class="brand-mark" aria-hidden="true">И</span>
+                    <span class="brand-copy">
+                        <strong>ИПК</strong>
+                        <small>private circle</small>
+                    </span>
+                </div>
+
+                <div class="auth-hero-copy">
+                    <span class="eyebrow"><i></i> Только свои</span>
+                    <h1>Общение без<br><em>лишнего шума.</em></h1>
+                    <p>Личное пространство для друзей: быстрые сообщения, живые статусы и ничего публичного.</p>
+                </div>
+
+                <div class="feature-stack" aria-label="Возможности">
+                    <div class="feature-pill">
+                        <span class="feature-icon">01</span>
+                        <span><b>Закрытый круг</b><small>Общение только с добавленными друзьями</small></span>
+                    </div>
+                    <div class="feature-pill">
+                        <span class="feature-icon">02</span>
+                        <span><b>В реальном времени</b><small>Онлайн-статусы, набор текста и прочтение</small></span>
+                    </div>
+                    <div class="feature-pill">
+                        <span class="feature-icon">03</span>
+                        <span><b>Твой стиль</b><small>Четыре темы и адаптивный интерфейс</small></span>
+                    </div>
+                </div>
+
+                <div class="auth-proof">
+                    <span class="proof-avatars" aria-hidden="true"><i>М</i><i>А</i><i>К</i></span>
+                    <span>Место, где остаются только близкие</span>
+                </div>
+            </div>
+
+            <div class="auth-panel">
+                <div class="mobile-brand">
+                    <span class="brand-mark">И</span>
+                    <strong>ИПК</strong>
+                </div>
+
+                <div class="auth-heading">
+                    <span class="auth-kicker" id="authKicker">С возвращением</span>
+                    <h2 id="authTitle">Рады снова видеть</h2>
+                    <p id="authDescription">Войди, чтобы продолжить разговор.</p>
+                </div>
+
+                <form id="authForm" class="auth-form" novalidate>
+                    <div class="field">
+                        <label for="nickname">Никнейм</label>
+                        <div class="field-control">
+                            <span class="field-prefix">@</span>
+                            <input id="nickname" type="text" maxlength="24" autocomplete="username" placeholder="твой_никнейм" aria-describedby="nicknameError" required>
+                        </div>
+                        <small class="field-error" id="nicknameError" aria-live="polite"></small>
+                    </div>
+
+                    <div class="field">
+                        <div class="field-label-row">
+                            <label for="password">Пароль</label>
+                            <span id="passwordHint">Минимум 8 символов</span>
+                        </div>
+                        <div class="field-control">
+                            <span class="field-prefix lock-icon" aria-hidden="true"></span>
+                            <input id="password" type="password" minlength="8" maxlength="72" autocomplete="current-password" placeholder="Введите пароль" aria-describedby="passwordError" required>
+                            <button class="password-toggle" id="passwordToggle" type="button" aria-label="Показать пароль" aria-pressed="false">
+                                <span aria-hidden="true">Показать</span>
+                            </button>
+                        </div>
+                        <small class="field-error" id="passwordError" aria-live="polite"></small>
+                    </div>
+
+                    <div class="password-meter hidden" id="registerExtra">
+                        <div class="meter-track"><span id="strengthFill"></span></div>
+                        <span id="strengthText">Придумай надёжный пароль</span>
+                    </div>
+
+                    <button class="primary-button auth-submit" id="authSubmit" type="submit">
+                        <span id="authSubmitText">Войти</span>
+                        <span class="button-arrow" aria-hidden="true">→</span>
+                    </button>
+                </form>
+
+                <div class="auth-switch-row">
+                    <span id="switchText">Впервые здесь?</span>
+                    <button id="switchAuth" type="button"><span id="switchAction">Создать аккаунт</span></button>
+                </div>
+
+                <p class="privacy-note"><span aria-hidden="true">◈</span> ИПК не является сервисом со сквозным шифрованием. Не отправляй пароли и секретные данные.</p>
+            </div>
+        </div>
+    </section>
+
+    <div class="app hidden" id="app">
+        <aside class="sidebar" id="sidebar">
+            <header class="sidebar-header">
+                <div class="brand">
+                    <span class="brand-mark">И</span>
+                    <span class="brand-copy"><strong>ИПК</strong><small>свой круг</small></span>
+                </div>
+                <button class="icon-button accent-icon" id="addFriendButton" type="button" aria-label="Добавить друга" title="Добавить друга">
+                    <span aria-hidden="true">+</span>
+                </button>
+            </header>
+
+            <div class="sidebar-search">
+                <span class="search-glyph" aria-hidden="true"></span>
+                <input id="searchInput" type="search" autocomplete="off" placeholder="Поиск по друзьям" aria-label="Поиск по друзьям">
+                <kbd>Ctrl K</kbd>
+            </div>
+
+            <div class="section-heading">
+                <span>Сообщения</span>
+                <button id="refreshButton" type="button" aria-label="Обновить список" title="Обновить">↻</button>
+            </div>
+
+            <div class="chat-list" id="chatList" aria-live="polite">
+                <div class="chat-skeleton"><i></i><span><b></b><small></small></span></div>
+                <div class="chat-skeleton"><i></i><span><b></b><small></small></span></div>
+                <div class="chat-skeleton"><i></i><span><b></b><small></small></span></div>
+            </div>
+
+            <footer class="user-card" id="userCard">
+                <button class="avatar-button" id="profileButton" type="button" aria-label="Открыть профиль">
+                    <span class="avatar user-avatar" id="userAvatar">?</span>
+                    <i class="presence-dot online" aria-hidden="true"></i>
+                </button>
+                <button class="user-summary" id="profileSummaryButton" type="button">
+                    <strong id="currentNickname">Пользователь</strong>
+                    <span>Настроить профиль</span>
+                </button>
+                <button class="icon-button sound-toggle" id="soundToggle" type="button" aria-label="Звук уведомлений" title="Звук уведомлений">🔊</button>
+                <button class="icon-button" id="themeButton" type="button" aria-label="Выбрать тему" title="Оформление">◐</button>
+                <button class="icon-button" id="logoutButton" type="button" aria-label="Выйти" title="Выйти">↪</button>
+            </footer>
+        </aside>
+
+        <main class="main">
+            <section class="welcome" id="welcomeScreen">
+                <div class="welcome-orbit" aria-hidden="true">
+                    <span class="welcome-logo">И</span>
+                    <i class="orbit-dot dot-one"></i>
+                    <i class="orbit-dot dot-two"></i>
+                    <i class="orbit-dot dot-three"></i>
+                </div>
+                <span class="eyebrow"><i></i> Пространство готово</span>
+                <h1>Начни разговор<br><em>со своими.</em></h1>
+                <p>Выбери друга слева или добавь нового человека в свой закрытый круг.</p>
+                <button class="secondary-button" id="welcomeAddFriend" type="button">Добавить друга <span>→</span></button>
+                <div class="shortcut-hint"><kbd>Ctrl</kbd><b>+</b><kbd>K</kbd><span>быстрый поиск</span></div>
+            </section>
+
+            <section class="chat-screen hidden" id="chatScreen" aria-label="Чат">
+                <header class="chat-header">
+                    <button class="icon-button mobile-back" id="mobileBackButton" type="button" aria-label="Вернуться к списку">←</button>
+                    <div class="chat-avatar-wrap">
+                        <span class="avatar chat-avatar" id="chatAvatar">?</span>
+                        <i class="presence-dot" id="chatPresenceDot" aria-hidden="true"></i>
+                    </div>
+                    <div class="chat-user-copy">
+                        <strong id="chatName">Пользователь</strong>
+                        <span id="chatStatus">не в сети</span>
+                    </div>
+                    <div class="chat-actions">
+                        <button class="icon-button" id="chatSearchButton" type="button" aria-label="Поиск в чате" title="Поиск в чате"><span class="search-glyph"></span></button>
+                        <button class="icon-button" id="chatInfoButton" type="button" aria-label="Информация о чате" title="Информация">···</button>
+                    </div>
+                </header>
+
+                <div class="chat-search hidden" id="chatSearch">
+                    <span class="search-glyph" aria-hidden="true"></span>
+                    <input id="chatSearchInput" type="search" placeholder="Найти в переписке" aria-label="Найти в переписке">
+                    <span id="chatSearchCount"></span>
+                    <button id="closeChatSearch" type="button" aria-label="Закрыть поиск">×</button>
+                </div>
+
+                <div class="messages" id="messages" aria-live="polite" aria-relevant="additions">
+                    <div class="message-loader"><i></i><span>Загружаем переписку</span></div>
+                </div>
+
+                <div class="typing-row hidden" id="typingRow"><span><i></i><i></i><i></i></span><b id="typingText">печатает</b></div>
+
+                <form class="composer" id="messageForm">
+                    <div class="emoji-picker hidden" id="emojiPicker" aria-label="Эмодзи"></div>
+                    <input type="file" id="fileInput" hidden>
+                    <button class="composer-button" id="attachButton" type="button" aria-label="Прикрепить файл" title="Отправить файл">📎</button>
+                    <button class="composer-button" id="emojiButton" type="button" aria-label="Открыть эмодзи" aria-expanded="false">☺</button>
+                    <div class="composer-input-wrap">
+                        <textarea id="messageInput" rows="1" maxlength="5000" placeholder="Сообщение" autocomplete="off" aria-label="Текст сообщения"></textarea>
+                        <span class="draft-status hidden" id="draftStatus">Черновик сохранён</span>
+                    </div>
+                    <button class="send-button" id="sendButton" type="submit" aria-label="Отправить сообщение" disabled><span>↑</span></button>
+                </form>
+            </section>
+        </main>
+    </div>
+
+    <div class="modal-overlay hidden" id="themeOverlay" aria-hidden="true">
+        <section class="modal" role="dialog" aria-modal="true" aria-labelledby="themeTitle">
+            <header class="modal-header"><div><span class="modal-kicker">Персонализация</span><h2 id="themeTitle">Выбери настроение</h2></div><button class="modal-close" id="closeTheme" type="button" aria-label="Закрыть">×</button></header>
+            <div class="theme-grid">
+                <button class="theme-card active" data-theme="midnight" type="button"><span class="theme-preview preview-midnight"><i></i><b></b></span><strong>Midnight</strong><small>Глубокая ночь</small></button>
+                <button class="theme-card" data-theme="violet" type="button"><span class="theme-preview preview-violet"><i></i><b></b></span><strong>Violet</strong><small>Мягкий неон</small></button>
+                <button class="theme-card" data-theme="ocean" type="button"><span class="theme-preview preview-ocean"><i></i><b></b></span><strong>Ocean</strong><small>Холодный бриз</small></button>
+                <button class="theme-card" data-theme="light" type="button"><span class="theme-preview preview-light"><i></i><b></b></span><strong>Daylight</strong><small>Чистый свет</small></button>
+            </div>
+        </section>
+    </div>
+
+    <div class="modal-overlay hidden" id="friendOverlay" aria-hidden="true">
+        <section class="modal friends-modal" role="dialog" aria-modal="true" aria-labelledby="friendTitle">
+            <header class="modal-header"><div><span class="modal-kicker">Твой круг</span><h2 id="friendTitle">Друзья</h2></div><button class="modal-close" id="closeFriend" type="button" aria-label="Закрыть">×</button></header>
+            <div class="friend-content">
+                <div class="friend-search">
+                    <div><span class="search-glyph"></span><input id="friendSearchInput" type="search" maxlength="24" autocomplete="off" placeholder="Никнейм друга"></div>
+                    <button class="primary-button compact" id="friendSearchButton" type="button">Найти</button>
+                </div>
+                <div id="friendSearchResults" class="friend-section"></div>
+                <div id="friendRequests" class="friend-section"></div>
+                <div id="friendListModal" class="friend-section"></div>
+            </div>
+        </section>
+    </div>
+
+    <div class="modal-overlay hidden" id="profileOverlay" aria-hidden="true">
+        <section class="modal profile-modal" role="dialog" aria-modal="true" aria-labelledby="profileTitle">
+            <header class="modal-header"><div><span class="modal-kicker">Аккаунт</span><h2 id="profileTitle">Твой профиль</h2></div><button class="modal-close" id="closeProfile" type="button" aria-label="Закрыть">×</button></header>
+            <div class="profile-content">
+                <div class="profile-hero"><span class="avatar profile-avatar" id="profileAvatar">?</span><div><strong data-current-username>Пользователь</strong><small>Участник закрытого круга</small></div></div>
+                <div class="field"><label for="usernameInput">Никнейм</label><div class="field-control"><span class="field-prefix">@</span><input id="usernameInput" type="text" minlength="3" maxlength="24" autocomplete="off"></div><small class="field-help">3–24 символа: буквы, цифры и нижнее подчёркивание</small></div>
+                <button id="saveProfile" type="button" class="primary-button">Сохранить изменения</button>
+            </div>
+        </section>
+    </div>
+
+    <div class="modal-overlay hidden" id="confirmOverlay" aria-hidden="true">
+        <section class="modal confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="confirmTitle">
+            <div class="confirm-icon">!</div>
+            <h2 id="confirmTitle">Удалить друга?</h2>
+            <p id="confirmText">Переписка сохранится, но новые сообщения будут недоступны.</p>
+            <div class="confirm-actions"><button class="secondary-button" id="confirmCancel" type="button">Отмена</button><button class="danger-button" id="confirmAction" type="button">Удалить</button></div>
+        </section>
+    </div>
+
+    <div class="connection-pill hidden" id="connectionPill" role="status"><i></i><span>Восстанавливаем связь…</span></div>
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="/app.js?v=4"></script>
+    <script src="/script.js?v=4"></script>
+</body>
+</html>
