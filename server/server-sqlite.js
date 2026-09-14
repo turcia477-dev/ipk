@@ -106,8 +106,19 @@ function issueSession(userId) {
     const token = crypto.randomBytes(32).toString("base64url");
     const tokenHash = hashToken(token);
     const expiresAt = new Date(Date.now() + SESSION_TTL_MS).toISOString();
+    // Clean expired sessions
     db.run("DELETE FROM sessions WHERE expires_at <= ?", [new Date().toISOString()]);
-    db.run("DELETE FROM sessions WHERE user_id = ? AND token NOT IN (SELECT token FROM sessions WHERE user_id = ? ORDER BY created_at DESC LIMIT 4)", [userId, userId]);
+    // Limit to 5 active sessions per user (delete oldest beyond 5)
+    const userSessions = [];
+    for (const [t, s] of db._iterateSessions()) {
+        if (Number(s.user_id) === Number(userId) && s.expires_at && new Date(s.expires_at) > new Date()) {
+            userSessions.push({ token: t, created_at: s.created_at });
+        }
+    }
+    userSessions.sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
+    for (let i = 5; i < userSessions.length; i++) {
+        db.run("DELETE FROM sessions WHERE token = ?", [userSessions[i].token]);
+    }
     db.run("INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, ?)", [tokenHash, userId, expiresAt]);
     return token;
 }
@@ -164,7 +175,7 @@ function notifyFriends(userId, event, payload) {
 }
 
 app.get("/", (req, res) => res.sendFile(path.join(PUBLIC_DIR, "index.html")));
-app.get("/api/status", (req, res) => res.json({ ok: true, server: "ИПК", version: "2.1.1", db: "in-memory-js", time: new Date().toISOString() }));
+app.get("/api/status", (req, res) => res.json({ ok: true, server: "ИПК", version: "2.2.0", db: "in-memory-js", time: new Date().toISOString() }));
 app.get("/api/health", (req, res) => res.json({ ok: true, status: "healthy", db: "in-memory-js", uptime: process.uptime() }));
 
 app.post("/api/register", authLimiter, async (req, res) => {
