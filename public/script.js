@@ -194,13 +194,32 @@ document.addEventListener("keydown", (event) => {
 });
 
 /* Theme */
+/**
+ * Список допустимых тем берём из разметки, а не из жёсткого перечня.
+ * Раньше здесь стоял массив из четырёх тем, и любую новую он молча откатывал
+ * к midnight — при этом всплывало «Оформление изменено», то есть человек
+ * получал ложное подтверждение. Теперь достаточно добавить карточку в разметку.
+ */
+function allowedThemes() {
+    const fromMarkup = [...document.querySelectorAll(".theme-card")]
+        .map((card) => card.dataset.theme)
+        .filter(Boolean);
+    return fromMarkup.length ? fromMarkup : ["midnight"];
+}
+
+// Цвет адресной строки в мобильном браузере — под фон темы.
+const THEME_COLORS = {
+    midnight: "#080b12", violet: "#0d0812", ocean: "#061015", light: "#eef1f7",
+    sunset: "#150b12", forest: "#071310", rose: "#140b10", sand: "#f6f1e8"
+};
+
 function applyTheme(theme = "midnight") {
-    const allowed = ["midnight", "violet", "ocean", "light"];
+    const allowed = allowedThemes();
     const selected = allowed.includes(theme) ? theme : "midnight";
     document.body.dataset.theme = selected;
     localStorage.setItem("ipk_theme", selected);
     document.querySelectorAll(".theme-card").forEach((card) => card.classList.toggle("active", card.dataset.theme === selected));
-    document.querySelector('meta[name="theme-color"]')?.setAttribute("content", selected === "light" ? "#eef1f7" : "#080b12");
+    document.querySelector('meta[name="theme-color"]')?.setAttribute("content", THEME_COLORS[selected] || "#080b12");
 }
 
 applyTheme(localStorage.getItem("ipk_theme") || "midnight");
