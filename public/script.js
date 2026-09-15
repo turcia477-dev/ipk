@@ -1031,16 +1031,34 @@ function updatePresenceUI() {
     if (!friendOverlay.classList.contains("hidden")) renderFriendList(friendsCache);
 }
 
-/* Periodic last-seen refresh (every 60s) */
+/* Раз в минуту спрашиваем у сервера актуальное присутствие. Если событие
+   user:online потерялось (обрыв связи, сон приложения), статус починится сам —
+   без перезагрузки страницы. */
 setInterval(() => {
-    if (friendsCache.length && IPK.getToken()) {
-        // Only re-render if the document is visible
-        if (!document.hidden) {
-            renderSidebarFriends(friendsCache);
-            if (currentChatUser) updateCurrentChatStatus();
-        }
+    if (document.hidden || !IPK.getToken()) return;
+    if (socket?.connected) socket.emit("presence:get");
+    if (friendsCache.length) {
+        renderSidebarFriends(friendsCache);
+        if (currentChatUser) updateCurrentChatStatus();
     }
 }, 60000);
+
+/* Возвращаясь во вкладку, сразу подтягиваем свежее состояние: пока вкладка была
+   в фоне, соединение могло отвалиться, а сообщения — прийти мимо. */
+let hiddenSince = 0;
+document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+        hiddenSince = Date.now();
+        return;
+    }
+    if (!IPK.getToken()) return;
+    if (socket && !socket.connected) socket.connect();
+    if (socket?.connected) socket.emit("presence:get");
+    if (Date.now() - hiddenSince > 10000) {
+        refreshFriends();
+        if (currentChatUser) loadMessages(currentChatUser.id);
+    }
+});
 
 async function markMessagesRead(userId) {
     try {

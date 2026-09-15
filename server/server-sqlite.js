@@ -32,6 +32,10 @@ const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 // 256 МБ хранилища на бесплатном тарифе Bonto — 25 МБ на файл это разумный потолок.
 const MAX_FILE_SIZE = Number(process.env.IPK_MAX_FILE_SIZE) || 25 * 1024 * 1024;
 
+// Токен для выгрузки резервной копии. Если не задан — эндпоинт выключен,
+// чтобы база случайно не оказалась доступна всем желающим.
+const BACKUP_TOKEN = String(process.env.IPK_BACKUP_TOKEN || "");
+
 // Эти расширения показываем прямо в переписке картинкой. Всё остальное — скачиванием.
 const INLINE_IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"];
 
@@ -234,7 +238,7 @@ function depVersion(name) {
 app.get("/api/status", (req, res) => res.json({
     ok: true,
     server: "ИПК",
-    version: "2.4.1",
+    version: "2.5.0",
     db: "file-json",
     dataDir: db.DATA_DIR,
     persistent: db.PERSISTENT,
@@ -257,6 +261,25 @@ app.get("/api/health", (req, res) => res.json({
     db: "file-json",
     uptime: process.uptime()
 }));
+
+/**
+ * Выгрузка всей базы одним файлом — чтобы данные можно было забрать себе.
+ * Хостинг прямо оговаривает, что не гарантирует сохранность данных и что
+ * резервные копии — забота владельца приложения.
+ * Доступ только по секретному токену из переменной окружения IPK_BACKUP_TOKEN.
+ */
+app.get("/api/backup", (req, res) => {
+    if (!BACKUP_TOKEN) return sendError(res, 404, "Резервное копирование не настроено");
+    const provided = String(req.query.token || "");
+    const a = Buffer.from(provided);
+    const b = Buffer.from(BACKUP_TOKEN);
+    const matches = a.length === b.length && crypto.timingSafeEqual(a, b);
+    if (!matches) return sendError(res, 403, "Неверный токен");
+    const stamp = new Date().toISOString().slice(0, 10);
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(`ipk-backup-${stamp}.json`)}`);
+    res.send(db.exportSnapshot());
+});
 
 app.post("/api/register", authLimiter, async (req, res) => {
     try {

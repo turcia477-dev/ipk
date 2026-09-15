@@ -350,12 +350,35 @@ function unreadFrom(senderId, receiverId) {
 }
 
 function listFriendsWithMeta(userId) {
+    const me = Number(userId);
+
+    // Один проход по сообщениям вместо отдельного сканирования на каждого друга.
+    // Раньше это было O(друзья × сообщения), а список пересчитывается после
+    // каждого сообщения — именно из-за этого появлялись задержки.
+    const lastByPeer = new Map();
+    const unreadByPeer = new Map();
+
+    for (const message of Object.values(state.messages)) {
+        const sender = Number(message.sender_id);
+        const receiver = Number(message.receiver_id);
+
+        if (sender === me) {
+            const current = lastByPeer.get(receiver);
+            if (!current || Number(message.id) > Number(current.id)) lastByPeer.set(receiver, message);
+        } else if (receiver === me) {
+            const current = lastByPeer.get(sender);
+            if (!current || Number(message.id) > Number(current.id)) lastByPeer.set(sender, message);
+            if (Number(message.is_read) === 0) unreadByPeer.set(sender, (unreadByPeer.get(sender) || 0) + 1);
+        }
+    }
+
     const result = [];
     for (const link of Object.values(state.friends)) {
-        if (Number(link.user_id) !== Number(userId)) continue;
+        if (Number(link.user_id) !== me) continue;
         const friend = state.users[link.friend_id];
         if (!friend) continue;
-        const last = lastMessageBetween(link.user_id, friend.id);
+        const friendId = Number(friend.id);
+        const last = lastByPeer.get(friendId) || null;
         result.push({
             id: friend.id,
             username: friend.username,
@@ -363,7 +386,7 @@ function listFriendsWithMeta(userId) {
             last_seen: friend.last_seen || "",
             last_message: last ? last.text : "",
             last_message_at: last ? last.created_at : "",
-            unread_count: unreadFrom(friend.id, link.user_id),
+            unread_count: unreadByPeer.get(friendId) || 0,
             _sortAt: (last && last.created_at) || link.created_at || ""
         });
     }
@@ -375,29 +398,33 @@ function listFriendsWithMeta(userId) {
 /* ---------- Поиск пользователей ---------- */
 
 function searchUsers(meId, query, limit = 20) {
+    const me = Number(meId);
     const needle = String(query || "").toLowerCase();
     if (!needle) return [];
+
+    // Связи с текущим пользователем собираем один раз, а не перебором всех
+    // заявок для каждого найденного человека.
+    const sentTo = new Set();
+    const receivedFrom = new Set();
+    for (const request of Object.values(state.friendRequests)) {
+        if (request.status !== "pending") continue;
+        const sender = Number(request.sender_id);
+        const receiver = Number(request.receiver_id);
+        if (sender === me) sentTo.add(receiver);
+        else if (receiver === me) receivedFrom.add(sender);
+    }
+
     const result = [];
     for (const user of Object.values(state.users)) {
-        if (Number(user.id) === Number(meId)) continue;
+        const id = Number(user.id);
+        if (id === me) continue;
         if (!user.username.toLowerCase().includes(needle)) continue;
 
         let relation = "none";
-        if (areFriends(meId, user.id)) {
-            relation = "friend";
-        } else {
-            for (const request of Object.values(state.friendRequests)) {
-                if (request.status !== "pending") continue;
-                if (Number(request.sender_id) === Number(meId) && Number(request.receiver_id) === Number(user.id)) {
-                    relation = "sent";
-                    break;
-                }
-                if (Number(request.sender_id) === Number(user.id) && Number(request.receiver_id) === Number(meId)) {
-                    relation = "received";
-                    break;
-                }
-            }
-        }
+        if (areFriends(me, id)) relation = "friend";
+        else if (sentTo.has(id)) relation = "sent";
+        else if (receivedFrom.has(id)) relation = "received";
+
         result.push({ id: user.id, username: user.username, avatar: user.avatar || "", relation });
     }
     result.sort((a, b) => {
@@ -560,6 +587,11 @@ function findFileByUrl(fileUrl) {
 
 /* ---------- Служебное ---------- */
 
+/** Полный снимок базы — для резервной копии. */
+function exportSnapshot() {
+    return JSON.stringify(state, null, 2);
+}
+
 function getStats() {
     return {
         file: DB_FILE,
@@ -608,6 +640,7 @@ module.exports = {
     deleteMessage,
     canAccessFile,
     findFileByUrl,
+    exportSnapshot,
     getStats,
     flushSync,
     close
