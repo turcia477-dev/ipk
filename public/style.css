@@ -497,3 +497,128 @@ body[data-theme="light"] .message-row.own .message-bubble { color: white; }
 @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
+
+/* ============================================================
+   Дополнительные темы. Все подобраны мягкими: приглушённый фон,
+   спокойный акцент, никаких резких контрастов.
+   ============================================================ */
+
+body[data-theme="sunset"] {
+    --bg: #150b12;
+    --bg-deep: #0d060a;
+    --surface-solid: #1f1020;
+    --sidebar: rgba(26, 14, 24, 0.9);
+    --accent: #ff8a5c;
+    --accent-rgb: 255, 138, 92;
+    --accent-2: #ff5f9e;
+}
+
+body[data-theme="forest"] {
+    --bg: #071310;
+    --bg-deep: #040b09;
+    --surface-solid: #0d1e18;
+    --sidebar: rgba(9, 22, 18, 0.9);
+    --accent: #35d0a0;
+    --accent-rgb: 53, 208, 160;
+    --accent-2: #8ee36a;
+}
+
+body[data-theme="rose"] {
+    --bg: #140b10;
+    --bg-deep: #0c060a;
+    --surface-solid: #1e1118;
+    --sidebar: rgba(26, 16, 22, 0.9);
+    --accent: #ff7aa8;
+    --accent-rgb: 255, 122, 168;
+    --accent-2: #c69bff;
+}
+
+body[data-theme="sand"] {
+    color-scheme: light;
+    --bg: #f6f1e8;
+    --bg-deep: #ece5d8;
+    --surface: rgba(255, 253, 248, 0.92);
+    --surface-solid: #fffdf8;
+    --surface-soft: rgba(60, 45, 25, 0.045);
+    --surface-hover: rgba(60, 45, 25, 0.075);
+    --sidebar: rgba(250, 246, 238, 0.92);
+    --text: #241d13;
+    --text-soft: #544a3a;
+    --muted: #8a7c66;
+    --border: rgba(60, 45, 25, 0.09);
+    --border-strong: rgba(60, 45, 25, 0.16);
+    --accent: #d98324;
+    --accent-rgb: 217, 131, 36;
+    --accent-2: #e8a33d;
+    --shadow: 0 28px 90px rgba(80, 62, 34, 0.2);
+}
+
+.preview-sunset { background: #1b0d14; }
+.preview-forest { background: #071612; }
+.preview-rose { background: #190d13; }
+.preview-sand { background: #f2ece0; }
+
+/* ============================================================
+   Вступительный кадр: экран «закрыт», по центру светится шов,
+   затем створки расходятся вверх и вниз — как открываются глаза.
+   Длительность ~3 секунды. Пропускается щелчком или клавишей.
+   ============================================================ */
+
+.intro { position: fixed; inset: 0; z-index: 999; overflow: hidden; pointer-events: none; animation: introLeave 0.5s ease 2.6s forwards; }
+.intro-lid { position: absolute; left: -6%; width: 112%; height: 52%; }
+.intro-lid-top {
+    top: 0;
+    background: radial-gradient(120% 90% at 50% 100%, rgba(var(--accent-rgb), 0.2), transparent 60%), linear-gradient(180deg, #04060b 0%, #080c14 100%);
+    border-bottom-left-radius: 50% 40px;
+    border-bottom-right-radius: 50% 40px;
+    animation: lidTop 1.5s var(--ease) 0.8s forwards;
+}
+.intro-lid-bottom {
+    bottom: 0;
+    background: radial-gradient(120% 90% at 50% 0%, rgba(var(--accent-rgb), 0.2), transparent 60%), linear-gradient(0deg, #04060b 0%, #080c14 100%);
+    border-top-left-radius: 50% 40px;
+    border-top-right-radius: 50% 40px;
+    animation: lidBottom 1.5s var(--ease) 0.8s forwards;
+}
+@keyframes lidTop { to { transform: translateY(-104%); } }
+@keyframes lidBottom { to { transform: translateY(104%); } }
+
+.intro-seam {
+    position: absolute; left: 0; right: 0; top: calc(50% - 1px); height: 2px;
+    background: linear-gradient(90deg, transparent, rgba(var(--accent-rgb), 0.9), #fff, rgba(var(--accent-rgb), 0.9), transparent);
+    animation: seam 1.7s var(--ease) 0.35s forwards;
+}
+@keyframes seam {
+    0% { transform: scaleX(0.06); opacity: 0; }
+    24% { transform: scaleX(1); opacity: 1; }
+    100% { transform: scaleX(1.06) scaleY(11); opacity: 0; }
+}
+
+.intro-glow {
+    position: absolute; inset: 0;
+    background: radial-gradient(58% 38% at 50% 50%, rgba(var(--accent-rgb), 0.34), transparent 70%);
+    animation: glowPulse 2.6s ease-out forwards;
+}
+@keyframes glowPulse { 0% { opacity: 0; } 34% { opacity: 0.8; } 100% { opacity: 0; } }
+
+.intro-mark { position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; gap: 12px; text-align: center; animation: markIn 1.05s var(--ease) 0.2s both, markOut 0.8s ease 1.7s forwards; }
+.intro-mark strong {
+    font-size: clamp(40px, 9vw, 76px); font-weight: 900; letter-spacing: 0.2em; padding-left: 0.2em;
+    background: linear-gradient(135deg, #ffffff, rgba(var(--accent-rgb), 0.95), #ffffff);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    filter: drop-shadow(0 0 38px rgba(var(--accent-rgb), 0.55));
+}
+.intro-mark span { color: rgba(255, 255, 255, 0.5); font-size: 10px; letter-spacing: 0.44em; text-transform: uppercase; }
+@keyframes markIn { from { opacity: 0; transform: translateY(18px) scale(0.94); filter: blur(10px); } to { opacity: 1; transform: none; filter: blur(0); } }
+@keyframes markOut { to { opacity: 0; transform: translateY(-14px) scale(1.06); filter: blur(8px); } }
+
+.intro.intro-leaving { animation: introLeave 0.45s ease forwards; }
+@keyframes introLeave { to { opacity: 0; visibility: hidden; } }
+
+body.intro-on { overflow: hidden; }
+
+/* Кому анимация мешает — не показываем её вовсе. */
+@media (prefers-reduced-motion: reduce) {
+    .intro { display: none; }
+    .message-row { animation: none; }
+}

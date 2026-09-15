@@ -1,7 +1,7 @@
 "use strict";
 
 /**
- * ИПК — сервер. v2.3.0
+ * ИПК — сервер.
  *
  * Работает через постоянный слой данных (database-sqlite.js): обычные функции
  * вместо SQL-строк. Файлы сохраняются в постоянный каталог рядом с базой,
@@ -18,6 +18,7 @@ const crypto = require("crypto");
 const bcrypt = require("bcryptjs");
 const fs = require("fs");
 const multer = require("multer");
+const compression = require("compression");
 const db = require("./database-sqlite");
 
 const app = express();
@@ -178,6 +179,9 @@ app.use((req, res, next) => {
     res.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self'; font-src 'self'; connect-src 'self' ws: wss:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");
     next();
 });
+// Сжатие ответов: стили и скрипты уезжают в 3–4 раза меньшим объёмом,
+// страница открывается заметно быстрее. Порог 1 КБ — мелочь не трогаем.
+app.use(compression({ threshold: 1024 }));
 app.use(express.json({ limit: "64kb", strict: true }));
 app.use("/api", apiLimiter);
 // etag и lastModified включены намеренно. Раньше они были отключены, а к файлам
@@ -265,7 +269,7 @@ function depVersion(name) {
 app.get("/api/status", (req, res) => res.json({
     ok: true,
     server: "ИПК",
-    version: "2.6.3",
+    version: "2.7.0",
     db: "file-json",
     dataDir: db.DATA_DIR,
     persistent: db.PERSISTENT,

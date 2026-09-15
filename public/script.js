@@ -1167,3 +1167,43 @@ window.addEventListener("ipk:logout", () => {
     appEl.classList.remove("mobile-chat-open");
     [themeOverlay, friendOverlay, profileOverlay, confirmOverlay].forEach(closeModal);
 });
+
+/* ============================================================
+   Вступительный кадр.
+
+   Экран «закрыт» двумя створками, по центру светится шов, затем
+   створки расходятся вверх и вниз — как открываются глаза. Вся
+   сцена длится около трёх секунд и полностью на CSS; здесь только
+   уборка и возможность пропустить.
+
+   Пропуск: щелчок мышью или любая клавиша.
+   Если в системе включено «уменьшить движение» — не показываем вовсе.
+   ============================================================ */
+(function playIntro() {
+    const intro = document.getElementById("intro");
+    if (!intro) return;
+
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+        intro.remove();
+        return;
+    }
+
+    document.body.classList.add("intro-on");
+
+    let done = false;
+    const finish = () => {
+        if (done) return;
+        done = true;
+        window.clearTimeout(timer);
+        window.removeEventListener("keydown", finish);
+        window.removeEventListener("pointerdown", finish);
+        document.body.classList.remove("intro-on");
+        intro.classList.add("intro-leaving");
+        window.setTimeout(() => intro.remove(), 480);
+    };
+
+    // Страховка на случай, если анимация не проиграется: убираем сцену сами.
+    const timer = window.setTimeout(finish, 2700);
+    window.addEventListener("keydown", finish);
+    window.addEventListener("pointerdown", finish);
+})();
