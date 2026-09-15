@@ -14,12 +14,51 @@
  */
 
 const fs = require("fs");
+const os = require("os");
 const path = require("path");
 
-const DATA_DIR = process.env.IPK_DATA_DIR || path.join(__dirname, "..", "data");
+const FLUSH_DEBOUNCE_MS = 200;
+const PROJECT_DATA_DIR = path.join(__dirname, "..", "data");
+
+function isWritableDir(dir) {
+    try {
+        fs.mkdirSync(dir, { recursive: true });
+        const probe = path.join(dir, ".write-probe");
+        fs.writeFileSync(probe, "ok");
+        fs.unlinkSync(probe);
+        return true;
+    } catch (error) {
+        console.error(`  каталог недоступен для записи: ${dir} (${error.code || error.message})`);
+        return false;
+    }
+}
+
+/**
+ * Ищем первое место, куда реально можно писать.
+ * Падать на старте нельзя: если процесс умирает, хостинг отдаёт 502
+ * и мессенджер становится недоступен целиком. Лучше работать без
+ * сохранения на диск, чем не работать вовсе.
+ */
+function resolveDataDir() {
+    const candidates = [];
+    if (process.env.IPK_DATA_DIR) candidates.push(process.env.IPK_DATA_DIR);
+    candidates.push(PROJECT_DATA_DIR);
+    candidates.push(path.join(os.tmpdir(), "ipk-data"));
+    for (const dir of candidates) {
+        if (isWritableDir(dir)) return dir;
+    }
+    return path.join(os.tmpdir(), "ipk-data");
+}
+
+const DATA_DIR = resolveDataDir();
+const PERSISTENT = process.env.IPK_DATA_DIR ? true : DATA_DIR === PROJECT_DATA_DIR;
 const DB_FILE = path.join(DATA_DIR, "ipk-store.json");
 const TMP_FILE = `${DB_FILE}.tmp`;
-const FLUSH_DEBOUNCE_MS = 200;
+
+console.log(`Каталог данных: ${DATA_DIR}`);
+if (!PERSISTENT) {
+    console.error("ВНИМАНИЕ: данные пишутся во временный каталог — после перезапуска они не сохранятся.");
+}
 
 function emptyState() {
     return {
@@ -503,6 +542,7 @@ load();
 module.exports = {
     DATA_DIR,
     DB_FILE,
+    PERSISTENT,
     createUser,
     findByUsername,
     findUserById,
