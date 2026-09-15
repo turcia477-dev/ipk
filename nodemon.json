@@ -1,0 +1,10 @@
+{
+  "ignore": [
+    "data/**",
+    "data",
+    "node_modules/**",
+    ".git/**",
+    "*.log"
+  ],
+  "delay": 300
+}

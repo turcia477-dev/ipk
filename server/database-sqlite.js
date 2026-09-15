@@ -20,12 +20,15 @@ const path = require("path");
 const FLUSH_DEBOUNCE_MS = 200;
 const PROJECT_DATA_DIR = path.join(__dirname, "..", "data");
 
+/**
+ * Проверяем доступность каталога БЕЗ создания и удаления файлов.
+ * На Bonto приложение запускается через nodemon, который следит за файлами:
+ * любой созданный или удалённый файл вызывает перезапуск сервера.
+ */
 function isWritableDir(dir) {
     try {
         fs.mkdirSync(dir, { recursive: true });
-        const probe = path.join(dir, ".write-probe");
-        fs.writeFileSync(probe, "ok");
-        fs.unlinkSync(probe);
+        fs.accessSync(dir, fs.constants.W_OK);
         return true;
     } catch (error) {
         console.error(`  каталог недоступен для записи: ${dir} (${error.code || error.message})`);
@@ -52,7 +55,10 @@ function resolveDataDir() {
 
 const DATA_DIR = resolveDataDir();
 const PERSISTENT = process.env.IPK_DATA_DIR ? true : DATA_DIR === PROJECT_DATA_DIR;
-const DB_FILE = path.join(DATA_DIR, "ipk-store.json");
+// Расширение .db выбрано намеренно. nodemon следит за файлами .js и .json,
+// поэтому база в .json вызывала бы перезапуск сервера на каждом сообщении.
+const DB_FILE = path.join(DATA_DIR, "ipk-store.db");
+const LEGACY_DB_FILE = path.join(DATA_DIR, "ipk-store.json");
 const TMP_FILE = `${DB_FILE}.tmp`;
 
 console.log(`Каталог данных: ${DATA_DIR}`);
@@ -88,8 +94,10 @@ function nowIso() {
 
 function load() {
     try {
-        if (!fs.existsSync(DB_FILE)) return;
-        const raw = fs.readFileSync(DB_FILE, "utf8");
+        let source = DB_FILE;
+        if (!fs.existsSync(source) && fs.existsSync(LEGACY_DB_FILE)) source = LEGACY_DB_FILE;
+        if (!fs.existsSync(source)) return;
+        const raw = fs.readFileSync(source, "utf8");
         if (!raw.trim()) return;
         const parsed = JSON.parse(raw);
         const base = emptyState();

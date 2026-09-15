@@ -37,15 +37,22 @@ const INLINE_IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp
 
 const onlineUsers = new Map();
 
-// Каталог вложений создаём аккуратно: если он недоступен, сервер всё равно
-// должен подняться. Ради одной папки ронять весь мессенджер нельзя.
-let uploadsReady = false;
-try {
-    fs.mkdirSync(UPLOADS_DIR, { recursive: true });
-    uploadsReady = true;
-} catch (error) {
-    console.error(`НЕ УДАЛОСЬ создать каталог вложений ${UPLOADS_DIR}: ${error.code || error.message}`);
-    console.error("Сервер продолжит работу, но загрузка файлов будет недоступна.");
+// Каталог вложений создаём ЛЕНИВО — только когда реально понадобится.
+// При старте нельзя трогать файловую систему: на Bonto приложение работает
+// под nodemon, и любое создание или удаление файла вызывает перезапуск.
+let uploadsReady = null;
+
+function ensureUploadsDir() {
+    if (uploadsReady !== null) return uploadsReady;
+    try {
+        fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+        uploadsReady = true;
+    } catch (error) {
+        console.error(`НЕ УДАЛОСЬ создать каталог вложений ${UPLOADS_DIR}: ${error.code || error.message}`);
+        console.error("Загрузка файлов будет недоступна, остальное работает.");
+        uploadsReady = false;
+    }
+    return uploadsReady;
 }
 
 /* ---------- Приём файлов ---------- */
@@ -202,7 +209,7 @@ app.get("/api/status", (req, res) => res.json({
     db: "file-json",
     dataDir: db.DATA_DIR,
     persistent: db.PERSISTENT,
-    uploadsReady,
+    uploadsReady: uploadsReady === null ? fs.existsSync(UPLOADS_DIR) : uploadsReady,
     maxFileSize: MAX_FILE_SIZE,
     time: new Date().toISOString()
 }));
@@ -393,7 +400,7 @@ app.delete("/api/messages/:messageId", auth, (req, res) => {
 
 app.post("/api/upload", auth, messageLimiter, upload.single("file"), (req, res) => {
     try {
-        if (!uploadsReady) return sendError(res, 503, "Хранилище файлов недоступно на сервере");
+        if (!ensureUploadsDir()) return sendError(res, 503, "Хранилище файлов недоступно на сервере");
         if (!req.file) return sendError(res, 400, "Файл не загружен");
         const receiverId = Number(req.body?.receiverId);
         if (!Number.isSafeInteger(receiverId) || receiverId <= 0) return sendError(res, 400, "Некорректный получатель");
