@@ -1222,7 +1222,7 @@ window.addEventListener("ipk:logout", () => {
     };
 
     // Страховка на случай, если анимация не проиграется: убираем сцену сами.
-    const timer = window.setTimeout(finish, 2700);
+    const timer = window.setTimeout(finish, 3200);
     window.addEventListener("keydown", finish);
     window.addEventListener("pointerdown", finish);
 })();

@@ -335,13 +335,13 @@ kbd { padding: 3px 6px; border: 1px solid var(--border-strong); border-bottom-wi
 /* Диалоговая колонка ограничена по ширине и стоит по центру. Раньше отступы
    были не больше 72px, поэтому на широком мониторе сообщения уезжали к самым
    краям и между собеседниками оставался полупустой экран. */
-.messages { min-height: 0; flex: 1; padding: 24px max(18px, calc((100% - 900px) / 2)) 22px; overflow-y: auto; scroll-behavior: smooth; scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
-.message-row { max-width: min(78%, 640px); margin-top: 14px; display: flex; flex-direction: column; animation: messageIn 0.26s var(--ease) both; }
+.messages { min-height: 0; flex: 1; padding: 24px max(18px, calc((100% - 740px) / 2)) 22px; overflow-y: auto; scroll-behavior: smooth; scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
+.message-row { max-width: min(84%, 520px); margin-top: 12px; display: flex; flex-direction: column; animation: messageIn 0.26s var(--ease) both; }
 .message-row.own { margin-left: auto; align-items: flex-end; }
 .message-row.other { margin-right: auto; align-items: flex-start; }
 /* Подряд идущие сообщения одного собеседника жмутся друг к другу: диалог
    читается плотнее, а смена собеседника всё равно хорошо заметна. */
-.message-row.own + .message-row.own, .message-row.other + .message-row.other { margin-top: 4px; }
+.message-row.own + .message-row.own, .message-row.other + .message-row.other { margin-top: 3px; }
 @keyframes messageIn { from { opacity: 0; transform: translateY(6px) scale(0.99); } to { opacity: 1; transform: none; } }
 .message-bubble { position: relative; padding: 10px 14px 8px; border: 1px solid var(--border); border-radius: 7px 17px 17px 17px; background: var(--surface-solid); box-shadow: 0 3px 12px rgba(0, 0, 0, 0.06); }
 .message-row.own .message-bubble { border-color: rgba(255, 255, 255, 0.09); border-radius: 17px 7px 17px 17px; background: linear-gradient(140deg, var(--accent), color-mix(in srgb, var(--accent-2) 78%, var(--accent))); color: white; box-shadow: 0 4px 16px rgba(var(--accent-rgb), 0.13); }
@@ -379,10 +379,10 @@ a.file-download:hover { text-decoration: underline; }
 .message-loader { height: 100%; display: grid; place-content: center; justify-items: center; gap: 12px; color: var(--muted); font-size: 10px; }
 .message-loader i { width: 24px; height: 24px; border: 2px solid var(--border-strong); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.7s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
-.typing-row { height: 26px; padding: 0 max(18px, calc((100% - 900px) / 2)); display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 9px; }
+.typing-row { height: 26px; padding: 0 max(18px, calc((100% - 740px) / 2)); display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 9px; }
 .typing-row > span { display: flex; gap: 3px; }.typing-row i { width: 4px; height: 4px; border-radius: 50%; background: var(--accent-2); animation: typing 1s ease-in-out infinite; }.typing-row i:nth-child(2) { animation-delay: .15s; }.typing-row i:nth-child(3) { animation-delay: .3s; }
 @keyframes typing { 0%, 60%, 100% { transform: translateY(0); opacity: .4; } 30% { transform: translateY(-3px); opacity: 1; } }
-.composer { position: relative; padding: 13px max(18px, calc((100% - 900px) / 2)) calc(15px + env(safe-area-inset-bottom)); display: flex; align-items: flex-end; gap: 8px; border-top: 1px solid var(--border); background: color-mix(in srgb, var(--bg) 80%, transparent); backdrop-filter: blur(22px); }
+.composer { position: relative; padding: 13px max(18px, calc((100% - 740px) / 2)) calc(15px + env(safe-area-inset-bottom)); display: flex; align-items: flex-end; gap: 8px; border-top: 1px solid var(--border); background: color-mix(in srgb, var(--bg) 80%, transparent); backdrop-filter: blur(22px); }
 .composer-button, .send-button { width: 44px; height: 44px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 14px; transition: 0.2s var(--ease); }
 .composer-button { border: 1px solid var(--border); background: var(--surface-soft); color: var(--muted); font-size: 20px; }
 .composer-button:hover { transform: translateY(-2px); color: var(--text); background: var(--surface-hover); }
@@ -564,21 +564,21 @@ body[data-theme="sand"] {
    Длительность ~3 секунды. Пропускается щелчком или клавишей.
    ============================================================ */
 
-.intro { position: fixed; inset: 0; z-index: 999; overflow: hidden; pointer-events: none; animation: introLeave 0.5s ease 2.6s forwards; }
+.intro { position: fixed; inset: 0; z-index: 999; overflow: hidden; pointer-events: none; animation: introLeave 0.45s ease 2.95s forwards; }
 .intro-lid { position: absolute; left: -6%; width: 112%; height: 52%; }
 .intro-lid-top {
     top: 0;
     background: radial-gradient(120% 90% at 50% 100%, rgba(var(--accent-rgb), 0.2), transparent 60%), linear-gradient(180deg, #04060b 0%, #080c14 100%);
     border-bottom-left-radius: 50% 40px;
     border-bottom-right-radius: 50% 40px;
-    animation: lidTop 1.5s var(--ease) 0.8s forwards;
+    animation: lidTop 1.25s var(--ease) 1.6s forwards;
 }
 .intro-lid-bottom {
     bottom: 0;
     background: radial-gradient(120% 90% at 50% 0%, rgba(var(--accent-rgb), 0.2), transparent 60%), linear-gradient(0deg, #04060b 0%, #080c14 100%);
     border-top-left-radius: 50% 40px;
     border-top-right-radius: 50% 40px;
-    animation: lidBottom 1.5s var(--ease) 0.8s forwards;
+    animation: lidBottom 1.25s var(--ease) 1.6s forwards;
 }
 @keyframes lidTop { to { transform: translateY(-104%); } }
 @keyframes lidBottom { to { transform: translateY(104%); } }
@@ -586,7 +586,7 @@ body[data-theme="sand"] {
 .intro-seam {
     position: absolute; left: 0; right: 0; top: calc(50% - 1px); height: 2px;
     background: linear-gradient(90deg, transparent, rgba(var(--accent-rgb), 0.9), #fff, rgba(var(--accent-rgb), 0.9), transparent);
-    animation: seam 1.7s var(--ease) 0.35s forwards;
+    animation: seam 1.5s var(--ease) 0.25s forwards;
 }
 @keyframes seam {
     0% { transform: scaleX(0.06); opacity: 0; }
@@ -597,11 +597,11 @@ body[data-theme="sand"] {
 .intro-glow {
     position: absolute; inset: 0;
     background: radial-gradient(58% 38% at 50% 50%, rgba(var(--accent-rgb), 0.34), transparent 70%);
-    animation: glowPulse 2.6s ease-out forwards;
+    animation: glowPulse 2.4s ease-out forwards;
 }
 @keyframes glowPulse { 0% { opacity: 0; } 34% { opacity: 0.8; } 100% { opacity: 0; } }
 
-.intro-mark { position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; gap: 12px; text-align: center; animation: markIn 1.05s var(--ease) 0.2s both, markOut 0.8s ease 1.7s forwards; }
+.intro-mark { position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; gap: 12px; text-align: center; animation: markIn 0.95s var(--ease) 0.15s both, markOut 0.55s ease 1.05s forwards; }
 .intro-mark strong {
     font-size: clamp(40px, 9vw, 76px); font-weight: 900; letter-spacing: 0.2em; padding-left: 0.2em;
     background: linear-gradient(135deg, #ffffff, rgba(var(--accent-rgb), 0.95), #ffffff);

@@ -249,7 +249,7 @@ function notifyFriends(userId, event, payload) {
 
 /* ---------- Маршруты ---------- */
 
-const APP_VERSION = "2.8.1";
+const APP_VERSION = "2.8.2";
 
 let indexHtmlTemplate = null;
 
