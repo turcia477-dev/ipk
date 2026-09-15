@@ -32,6 +32,10 @@ const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 // 256 МБ хранилища на бесплатном тарифе Bonto — 25 МБ на файл это разумный потолок.
 const MAX_FILE_SIZE = Number(process.env.IPK_MAX_FILE_SIZE) || 25 * 1024 * 1024;
 
+// На бесплатном тарифе всего 256 МБ хранилища. Держим запас: если место
+// кончится, перестанет сохраняться и сама база, а это потеря переписки.
+const MAX_UPLOADS_BYTES = Number(process.env.IPK_MAX_UPLOADS_BYTES) || 200 * 1024 * 1024;
+
 // Токен для выгрузки резервной копии. Если не задан — эндпоинт выключен,
 // чтобы база случайно не оказалась доступна всем желающим.
 const BACKUP_TOKEN = String(process.env.IPK_BACKUP_TOKEN || "");
@@ -57,6 +61,25 @@ function ensureUploadsDir() {
         uploadsReady = false;
     }
     return uploadsReady;
+}
+
+/** Сколько места уже занято вложениями. */
+function uploadsSize() {
+    let total = 0;
+    try {
+        const stack = [UPLOADS_DIR];
+        while (stack.length) {
+            const dir = stack.pop();
+            for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+                const full = path.join(dir, entry.name);
+                if (entry.isDirectory()) stack.push(full);
+                else {
+                    try { total += fs.statSync(full).size; } catch (error) { /* пропускаем */ }
+                }
+            }
+        }
+    } catch (error) { /* каталога нет — считаем пустым */ }
+    return total;
 }
 
 /* ---------- Приём файлов ---------- */
@@ -238,7 +261,7 @@ function depVersion(name) {
 app.get("/api/status", (req, res) => res.json({
     ok: true,
     server: "ИПК",
-    version: "2.5.0",
+    version: "2.5.1",
     db: "file-json",
     dataDir: db.DATA_DIR,
     persistent: db.PERSISTENT,
@@ -252,6 +275,10 @@ app.get("/api/status", (req, res) => res.json({
         bcryptjs: depVersion("bcryptjs")
     },
     data: db.getStats(),
+    storage: {
+        uploadsBytes: uploadsSize(),
+        uploadsLimit: MAX_UPLOADS_BYTES
+    },
     time: new Date().toISOString()
 }));
 
@@ -462,6 +489,15 @@ app.post("/api/upload", auth, messageLimiter, upload.single("file"), (req, res) 
     try {
         if (!ensureUploadsDir()) return sendError(res, 503, "Хранилище файлов недоступно на сервере");
         if (!req.file) return sendError(res, 400, "Файл не загружен");
+
+        // Файл уже записан на диск — проверяем место и убираем его, если не влезает.
+        // Иначе переполнение хранилища остановит сохранение самой базы.
+        if (uploadsSize() > MAX_UPLOADS_BYTES) {
+            fs.rm(req.file.path, { force: true }, () => {});
+            return sendError(res, 507,
+                `Хранилище заполнено (лимит ${Math.round(MAX_UPLOADS_BYTES / 1024 / 1024)} МБ). Удалите старые вложения.`);
+        }
+
         const receiverId = Number(req.body?.receiverId);
         if (!Number.isSafeInteger(receiverId) || receiverId <= 0) return sendError(res, 400, "Некорректный получатель");
         if (!db.areFriends(req.user.id, receiverId)) return sendError(res, 403, "Отправлять файлы можно только друзьям");
