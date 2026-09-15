@@ -265,7 +265,7 @@ function depVersion(name) {
 app.get("/api/status", (req, res) => res.json({
     ok: true,
     server: "ИПК",
-    version: "2.6.1",
+    version: "2.6.2",
     db: "file-json",
     dataDir: db.DATA_DIR,
     persistent: db.PERSISTENT,

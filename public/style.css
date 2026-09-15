@@ -478,6 +478,8 @@ body[data-theme="light"] .message-row.own .message-bubble { color: white; }
     .composer-button, .send-button { width: 46px; height: 46px; }
     .emoji-picker { left: 10px; bottom: 66px; width: min(282px, calc(100vw - 20px)); }
     .welcome { display: none; }
+    /* Подсказка Ctrl+K рассчитана на клавиатуру — на телефоне бессмысленна. */
+    .sidebar-search kbd { display: none; }
     .theme-grid { grid-template-columns: repeat(2, 1fr); }
     .modal-overlay { padding: 10px; align-items: end; }
     .modal { max-height: calc(100dvh - 20px); border-radius: 22px 22px 12px 12px; }

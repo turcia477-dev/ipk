@@ -1097,7 +1097,17 @@ function formatSidebarTime(value) {
     return date.toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit" });
 }
 function scrollMessagesToBottom(smooth = true) {
-    requestAnimationFrame(() => messages.scrollTo({ top: messages.scrollHeight, behavior: smooth ? "smooth" : "auto" }));
+    requestAnimationFrame(() => {
+        messages.scrollTo({ top: messages.scrollHeight, behavior: smooth ? "smooth" : "auto" });
+        // После отрисовки высота переписки может вырасти: перенос строки,
+        // подгрузка картинки, появление поля ввода. Одного кадра не хватало —
+        // на телефоне список оставался выше низа и новое сообщение было скрыто.
+        // Поэтому через мгновение проверяем и при необходимости дотягиваем.
+        setTimeout(() => {
+            const left = messages.scrollHeight - messages.clientHeight - messages.scrollTop;
+            if (left > 4) messages.scrollTo({ top: messages.scrollHeight, behavior: "auto" });
+        }, 180);
+    });
 }
 
 /* Lifecycle */
