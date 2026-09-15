@@ -180,7 +180,11 @@ app.use((req, res, next) => {
 });
 app.use(express.json({ limit: "64kb", strict: true }));
 app.use("/api", apiLimiter);
-app.use(express.static(PUBLIC_DIR, { index: false, dotfiles: "deny", maxAge: 0, etag: false, lastModified: false }));
+// etag и lastModified включены намеренно. Раньше они были отключены, а к файлам
+// добавлялась ручная метка ?v=4 — если её забыть поднять, браузер показывал
+// старые стили и скрипты, и правки просто не доезжали до людей.
+// Сейчас браузер перепроверяет файлы на каждом запросе: не изменились — 304.
+app.use(express.static(PUBLIC_DIR, { index: false, dotfiles: "deny", maxAge: 0 }));
 
 function hashToken(token) {
     return crypto.createHash("sha256").update(String(token || "")).digest("hex");
@@ -261,7 +265,7 @@ function depVersion(name) {
 app.get("/api/status", (req, res) => res.json({
     ok: true,
     server: "ИПК",
-    version: "2.6.0",
+    version: "2.6.1",
     db: "file-json",
     dataDir: db.DATA_DIR,
     persistent: db.PERSISTENT,
