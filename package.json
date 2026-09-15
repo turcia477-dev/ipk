@@ -5,7 +5,8 @@
   "main": "server/server-sqlite.js",
   "type": "commonjs",
   "scripts": {
-    "start": "node server/server-sqlite.js"
+    "start": "node server/server-sqlite.js",
+    "test": "node tests/run-all.js"
   },
   "engines": {
     "node": ">=18"
