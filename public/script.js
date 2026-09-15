@@ -1096,17 +1096,37 @@ function formatSidebarTime(value) {
     if (date.toDateString() === today.toDateString()) return date.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
     return date.toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit" });
 }
+/**
+ * Мгновенный прыжок в самый низ.
+ * У списка в CSS задано scroll-behavior: smooth, поэтому обычный вызов
+ * scrollTo с behavior: "auto" всё равно анимируется — и прокрутка могла
+ * просто не доехать до низа (на широком экране список так и оставался
+ * на самом верху, а новое сообщение было не видно). Здесь плавность
+ * отключается на один вызов, чтобы прыжок был гарантированным.
+ */
+function jumpMessagesToBottom() {
+    const previous = messages.style.scrollBehavior;
+    messages.style.scrollBehavior = "auto";
+    messages.scrollTop = messages.scrollHeight;
+    messages.style.scrollBehavior = previous;
+}
+
 function scrollMessagesToBottom(smooth = true) {
+    if (!smooth) {
+        // Открытие переписки: показываем последнее сообщение сразу.
+        requestAnimationFrame(() => {
+            jumpMessagesToBottom();
+            // Высота может вырасти после отрисовки (перенос строки, картинка).
+            setTimeout(jumpMessagesToBottom, 180);
+        });
+        return;
+    }
     requestAnimationFrame(() => {
-        messages.scrollTo({ top: messages.scrollHeight, behavior: smooth ? "smooth" : "auto" });
-        // После отрисовки высота переписки может вырасти: перенос строки,
-        // подгрузка картинки, появление поля ввода. Одного кадра не хватало —
-        // на телефоне список оставался выше низа и новое сообщение было скрыто.
-        // Поэтому через мгновение проверяем и при необходимости дотягиваем.
+        messages.scrollTo({ top: messages.scrollHeight, behavior: "smooth" });
         setTimeout(() => {
             const left = messages.scrollHeight - messages.clientHeight - messages.scrollTop;
-            if (left > 4) messages.scrollTo({ top: messages.scrollHeight, behavior: "auto" });
-        }, 180);
+            if (left > 4) jumpMessagesToBottom();
+        }, 220);
     });
 }
 
