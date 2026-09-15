@@ -1,5 +1,15 @@
 "use strict";
 
+/**
+ * ИПК — сервер. v2.3.0
+ *
+ * Работает через постоянный слой данных (database-sqlite.js): обычные функции
+ * вместо SQL-строк. Файлы сохраняются в постоянный каталог рядом с базой,
+ * а не в /tmp, который стирается при перезапуске контейнера.
+ *
+ * Принимаются файлы ЛЮБЫХ типов, включая картинки и скриншоты.
+ */
+
 const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
@@ -8,46 +18,63 @@ const crypto = require("crypto");
 const bcrypt = require("bcryptjs");
 const fs = require("fs");
 const multer = require("multer");
-const { db, dbReady } = require("./database-sqlite");
+const db = require("./database-sqlite");
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, { serveClient: true, maxHttpBufferSize: 100000 });
+const io = new Server(server, { serveClient: true, maxHttpBufferSize: 200000 });
 const PORT = Number(process.env.PORT) || 3000;
 const HOST = process.env.HOST || "0.0.0.0";
 const PUBLIC_DIR = path.join(__dirname, "..", "public");
-const UPLOADS_DIR = process.env.IPK_UPLOADS_DIR || path.join("/tmp", "ipk-uploads");
+const UPLOADS_DIR = process.env.IPK_UPLOADS_DIR || path.join(db.DATA_DIR, "uploads");
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+// 256 МБ хранилища на бесплатном тарифе Bonto — 25 МБ на файл это разумный потолок.
+const MAX_FILE_SIZE = Number(process.env.IPK_MAX_FILE_SIZE) || 25 * 1024 * 1024;
+
+// Эти расширения показываем прямо в переписке картинкой. Всё остальное — скачиванием.
+const INLINE_IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"];
+
 const onlineUsers = new Map();
 
-if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 
-const ALLOWED_EXTENSIONS = [".doc", ".docx", ".pdf", ".txt", ".rtf", ".xls", ".xlsx", ".ppt", ".pptx", ".zip", ".rar", ".7z", ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".mp3", ".mp4", ".wav", ".avi", ".mov"];
-const MAX_FILE_SIZE = 50 * 1024 * 1024;
+/* ---------- Приём файлов ---------- */
+
+function safeExtension(originalName) {
+    const ext = path.extname(String(originalName || "")).toLowerCase();
+    const clean = ext.replace(/[^a-z0-9.]/g, "");
+    if (!clean || clean === "." || clean.length > 12) return ".bin";
+    return clean;
+}
+
+function displayName(originalName) {
+    const cleaned = String(originalName || "файл")
+        .replace(/[\\/:*?"<>|]/g, "")
+        .replace(/[\u0000-\u001f]/g, "")
+        .trim()
+        .slice(0, 180);
+    return cleaned || "файл";
+}
 
 const storage = multer.diskStorage({
     destination: (req, file, cb) => {
-        const today = new Date();
-        const monthDir = path.join(UPLOADS_DIR, `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`);
-        if (!fs.existsSync(monthDir)) fs.mkdirSync(monthDir, { recursive: true });
-        cb(null, monthDir);
+        const now = new Date();
+        const monthDir = path.join(UPLOADS_DIR, `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`);
+        try {
+            fs.mkdirSync(monthDir, { recursive: true });
+            cb(null, monthDir);
+        } catch (error) { cb(error); }
     },
     filename: (req, file, cb) => {
-        const ext = path.extname(file.originalname).toLowerCase();
-        const safeExt = ALLOWED_EXTENSIONS.includes(ext) ? ext : ".bin";
-        cb(null, `${Date.now()}-${crypto.randomBytes(8).toString("hex")}${safeExt}`);
+        cb(null, `${Date.now()}-${crypto.randomBytes(8).toString("hex")}${safeExtension(file.originalname)}`);
     }
 });
 
-const upload = multer({
-    storage,
-    limits: { fileSize: MAX_FILE_SIZE },
-    fileFilter: (req, file, cb) => {
-        const ext = path.extname(file.originalname).toLowerCase();
-        if (ALLOWED_EXTENSIONS.includes(ext)) cb(null, true);
-        else cb(null, false);
-    }
-});
+// Без fileFilter — принимаем любые типы файлов.
+const upload = multer({ storage, limits: { fileSize: MAX_FILE_SIZE, files: 1 } });
+
+/* ---------- Вспомогательное ---------- */
 
 function sendError(res, status, message) {
     return res.status(status).json({ ok: false, error: message, message });
@@ -91,7 +118,7 @@ app.use((req, res, next) => {
     res.setHeader("X-Frame-Options", "DENY");
     res.setHeader("Referrer-Policy", "no-referrer");
     res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
-    res.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' ws: wss:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");
+    res.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self'; font-src 'self'; connect-src 'self' ws: wss:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");
     next();
 });
 app.use(express.json({ limit: "64kb", strict: true }));
@@ -106,26 +133,17 @@ function issueSession(userId) {
     const token = crypto.randomBytes(32).toString("base64url");
     const tokenHash = hashToken(token);
     const expiresAt = new Date(Date.now() + SESSION_TTL_MS).toISOString();
-    // Clean expired sessions
-    db.run("DELETE FROM sessions WHERE expires_at <= ?", [new Date().toISOString()]);
-    // Limit to 5 active sessions per user (delete oldest beyond 5)
-    const userSessions = [];
-    for (const [t, s] of db._iterateSessions()) {
-        if (Number(s.user_id) === Number(userId) && s.expires_at && new Date(s.expires_at) > new Date()) {
-            userSessions.push({ token: t, created_at: s.created_at });
-        }
-    }
-    userSessions.sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
-    for (let i = 5; i < userSessions.length; i++) {
-        db.run("DELETE FROM sessions WHERE token = ?", [userSessions[i].token]);
-    }
-    db.run("INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, ?)", [tokenHash, userId, expiresAt]);
+    db.deleteExpiredSessions();
+    // Не больше 5 активных сессий на пользователя: самые старые отключаем.
+    const existing = db.listUserSessions(userId);
+    for (let i = 5; i < existing.length; i += 1) db.deleteSession(existing[i].token);
+    db.createSession(tokenHash, userId, expiresAt);
     return token;
 }
 
 function getUserByToken(token) {
     if (!token || typeof token !== "string" || token.length > 256) return null;
-    return db.get("SELECT users.id, users.username, users.avatar, sessions.token AS session_hash FROM sessions JOIN users ON users.id = sessions.user_id WHERE sessions.token = ? AND sessions.expires_at > ?", [hashToken(token), new Date().toISOString()]) || null;
+    return db.findUserBySession(hashToken(token));
 }
 
 function auth(req, res, next) {
@@ -153,30 +171,36 @@ function normalizeUsername(value) { return String(value || "").trim(); }
 function validUsername(username) { return /^[a-zA-Zа-яА-ЯёЁ0-9_]{3,24}$/.test(username); }
 function validPassword(password) {
     const value = String(password || "");
-    const bytes = Buffer.byteLength(value, "utf8");
-    return value.length >= 8 && bytes <= 72;
+    return value.length >= 8 && Buffer.byteLength(value, "utf8") <= 72;
 }
 function validLoginPassword(password) {
     const value = String(password || "");
-    const bytes = Buffer.byteLength(value, "utf8");
-    return value.length > 0 && bytes <= 72;
-}
-
-function isFriend(userId, friendId) {
-    return Boolean(db.get("SELECT 1 FROM friends WHERE user_id = ? AND friend_id = ?", [userId, friendId]));
-}
-
-function getFriendIds(userId) {
-    return db.all("SELECT friend_id FROM friends WHERE user_id = ?", [userId]).map((row) => Number(row.friend_id));
+    return value.length > 0 && Buffer.byteLength(value, "utf8") <= 72;
 }
 
 function notifyFriends(userId, event, payload) {
-    getFriendIds(userId).forEach((friendId) => io.to(`user:${friendId}`).emit(event, payload));
+    db.listFriendIds(userId).forEach((friendId) => io.to(`user:${friendId}`).emit(event, payload));
 }
 
+/* ---------- Маршруты ---------- */
+
 app.get("/", (req, res) => res.sendFile(path.join(PUBLIC_DIR, "index.html")));
-app.get("/api/status", (req, res) => res.json({ ok: true, server: "ИПК", version: "2.2.1", db: "in-memory-js", time: new Date().toISOString() }));
-app.get("/api/health", (req, res) => res.json({ ok: true, status: "healthy", db: "in-memory-js", uptime: process.uptime() }));
+
+app.get("/api/status", (req, res) => res.json({
+    ok: true,
+    server: "ИПК",
+    version: "2.3.0",
+    db: "file-json",
+    maxFileSize: MAX_FILE_SIZE,
+    time: new Date().toISOString()
+}));
+
+app.get("/api/health", (req, res) => res.json({
+    ok: true,
+    status: "healthy",
+    db: "file-json",
+    uptime: process.uptime()
+}));
 
 app.post("/api/register", authLimiter, async (req, res) => {
     try {
@@ -184,10 +208,9 @@ app.post("/api/register", authLimiter, async (req, res) => {
         const password = String(req.body?.password || "");
         if (!validUsername(username)) return sendError(res, 400, "Никнейм: 3–24 символа, только буквы, цифры и _");
         if (!validPassword(password)) return sendError(res, 400, "Пароль должен содержать минимум 8 символов и не превышать 72 байта");
-        if (db.get("SELECT 1 FROM users WHERE username = ?", [username])) return sendError(res, 409, "Такой никнейм уже занят");
+        if (db.findByUsername(username)) return sendError(res, 409, "Такой никнейм уже занят");
         const passwordHash = await bcrypt.hash(password, 12);
-        const result = db.run("INSERT INTO users (username, password) VALUES (?, ?)", [username, passwordHash]);
-        const user = db.get("SELECT id, username, avatar FROM users WHERE id = ?", [result.lastInsertRowid]);
+        const user = db.createUser(username, passwordHash);
         const token = issueSession(user.id);
         return res.status(201).json({ ok: true, token, user: publicUser(user) });
     } catch (error) {
@@ -201,7 +224,7 @@ app.post("/api/login", authLimiter, async (req, res) => {
         const username = normalizeUsername(req.body?.username);
         const password = String(req.body?.password || "");
         if (!validUsername(username) || !validLoginPassword(password)) return sendError(res, 401, "Неверный никнейм или пароль");
-        const user = db.get("SELECT * FROM users WHERE username = ?", [username]);
+        const user = db.findByUsername(username);
         const valid = user ? await bcrypt.compare(password, user.password) : false;
         if (!valid) return sendError(res, 401, "Неверный никнейм или пароль");
         const token = issueSession(user.id);
@@ -215,7 +238,7 @@ app.post("/api/login", authLimiter, async (req, res) => {
 app.get("/api/me", auth, (req, res) => res.json({ ok: true, user: publicUser(req.user) }));
 
 app.post("/api/logout", auth, async (req, res) => {
-    db.run("DELETE FROM sessions WHERE token = ?", [req.sessionHash]);
+    db.deleteSession(req.sessionHash);
     const sockets = await io.in(`user:${req.user.id}`).fetchSockets();
     sockets.filter((socket) => socket.sessionHash === req.sessionHash).forEach((socket) => socket.disconnect(true));
     res.json({ ok: true });
@@ -225,10 +248,9 @@ app.put("/api/profile", auth, (req, res) => {
     try {
         const username = normalizeUsername(req.body?.username);
         if (!validUsername(username)) return sendError(res, 400, "Никнейм: 3–24 символа, только буквы, цифры и _");
-        const existing = db.get("SELECT 1 FROM users WHERE username = ? AND id != ?", [username, req.user.id]);
-        if (existing) return sendError(res, 409, "Такой никнейм уже занят");
-        db.run("UPDATE users SET username = ? WHERE id = ?", [username, req.user.id]);
-        const user = db.get("SELECT id, username, avatar FROM users WHERE id = ?", [req.user.id]);
+        if (db.usernameTakenByOther(username, req.user.id)) return sendError(res, 409, "Такой никнейм уже занят");
+        db.updateUsername(req.user.id, username);
+        const user = db.findUserById(req.user.id);
         notifyFriends(req.user.id, "friend:profile", publicUser(user));
         return res.json({ ok: true, user: publicUser(user) });
     } catch (error) {
@@ -240,78 +262,56 @@ app.put("/api/profile", auth, (req, res) => {
 app.get("/api/users/search", auth, (req, res) => {
     const q = normalizeUsername(req.query.q).slice(0, 24);
     if (q.length < 2) return res.json({ ok: true, users: [] });
-    const users = db.all(`
-        SELECT u.id, u.username, u.avatar,
-            CASE
-                WHEN EXISTS (SELECT 1 FROM friends f WHERE f.user_id = ? AND f.friend_id = u.id) THEN 'friend'
-                WHEN EXISTS (SELECT 1 FROM friend_requests r WHERE r.sender_id = ? AND r.receiver_id = u.id AND r.status = 'pending') THEN 'sent'
-                WHEN EXISTS (SELECT 1 FROM friend_requests r WHERE r.sender_id = u.id AND r.receiver_id = ? AND r.status = 'pending') THEN 'received'
-                ELSE 'none'
-            END AS relation
-        FROM users u
-        WHERE u.id != ? AND u.username LIKE ? ESCAPE '\\'
-        ORDER BY CASE WHEN u.username = ? COLLATE NOCASE THEN 0 ELSE 1 END, u.username COLLATE NOCASE
-        LIMIT 20
-    `, [req.user.id, req.user.id, req.user.id, req.user.id, `%${q.replace(/[\\%_]/g, "\\$&")}%`, q]);
+    const users = db.searchUsers(req.user.id, q, 20);
     res.json({ ok: true, users: users.map((user) => ({ ...publicUser(user), relation: user.relation })) });
 });
 
 app.get("/api/friends", auth, (req, res) => {
-    const friends = db.all(`
-        SELECT u.id, u.username, u.avatar, u.last_seen,
-            (SELECT m.text FROM messages m
-             WHERE (m.sender_id = f.user_id AND m.receiver_id = u.id)
-                OR (m.sender_id = u.id AND m.receiver_id = f.user_id)
-             ORDER BY m.id DESC LIMIT 1) AS last_message,
-            (SELECT m.created_at FROM messages m
-             WHERE (m.sender_id = f.user_id AND m.receiver_id = u.id)
-                OR (m.sender_id = u.id AND m.receiver_id = f.user_id)
-             ORDER BY m.id DESC LIMIT 1) AS last_message_at,
-            (SELECT COUNT(*) FROM messages m
-             WHERE m.sender_id = u.id AND m.receiver_id = f.user_id AND m.is_read = 0) AS unread_count
-        FROM friends f
-        JOIN users u ON u.id = f.friend_id
-        WHERE f.user_id = ?
-        ORDER BY COALESCE(last_message_at, f.created_at) DESC, u.username COLLATE NOCASE
-    `, [req.user.id]);
-    res.json({ ok: true, friends: friends.map((friend) => ({ ...publicUser(friend), last_message: friend.last_message || "", last_message_at: friend.last_message_at || "", unread_count: Number(friend.unread_count) || 0, last_seen: friend.last_seen || "" })) });
+    const friends = db.listFriendsWithMeta(req.user.id);
+    res.json({
+        ok: true,
+        friends: friends.map((friend) => ({
+            ...publicUser(friend),
+            last_message: friend.last_message || "",
+            last_message_at: friend.last_message_at || "",
+            unread_count: Number(friend.unread_count) || 0,
+            last_seen: friend.last_seen || ""
+        }))
+    });
 });
 
 app.post("/api/friends/request", auth, (req, res) => {
     const targetId = Number(req.body?.userId);
     if (!Number.isSafeInteger(targetId) || targetId <= 0) return sendError(res, 400, "Некорректный пользователь");
     if (targetId === req.user.id) return sendError(res, 400, "Нельзя добавить самого себя");
-    const target = db.get("SELECT id, username, avatar FROM users WHERE id = ?", [targetId]);
+    const target = db.findUserById(targetId);
     if (!target) return sendError(res, 404, "Пользователь не найден");
-    if (isFriend(req.user.id, targetId)) return sendError(res, 409, "Вы уже друзья");
-    const reverse = db.get("SELECT id FROM friend_requests WHERE sender_id = ? AND receiver_id = ? AND status = 'pending'", [targetId, req.user.id]);
-    if (reverse) return sendError(res, 409, "Этот пользователь уже отправил тебе заявку");
-    const existing = db.get("SELECT id, status FROM friend_requests WHERE sender_id = ? AND receiver_id = ?", [req.user.id, targetId]);
-    if (existing?.status === "pending") return sendError(res, 409, "Заявка уже отправлена");
-    if (existing) db.run("UPDATE friend_requests SET status = 'pending', created_at = datetime('now') WHERE id = ?", [existing.id]);
-    else db.run("INSERT INTO friend_requests (sender_id, receiver_id, status) VALUES (?, ?, 'pending')", [req.user.id, targetId]);
+    if (db.areFriends(req.user.id, targetId)) return sendError(res, 409, "Вы уже друзья");
+
+    const reverse = db.findRequestBetween(targetId, req.user.id);
+    if (reverse && reverse.status === "pending") return sendError(res, 409, "Этот пользователь уже отправил тебе заявку");
+
+    const existing = db.findRequestBetween(req.user.id, targetId);
+    if (existing && existing.status === "pending") return sendError(res, 409, "Заявка уже отправлена");
+    if (existing) db.setFriendRequestStatus(existing.id, "pending");
+    else db.createFriendRequest(req.user.id, targetId);
+
     io.to(`user:${targetId}`).emit("friend:request", publicUser(req.user));
     res.status(201).json({ ok: true, message: "Заявка отправлена" });
 });
 
 app.get("/api/friends/requests", auth, (req, res) => {
-    const requests = db.all(`
-        SELECT r.id, u.id AS user_id, u.username, u.avatar, r.created_at
-        FROM friend_requests r JOIN users u ON u.id = r.sender_id
-        WHERE r.receiver_id = ? AND r.status = 'pending'
-        ORDER BY r.created_at DESC
-    `, [req.user.id]);
-    res.json({ ok: true, requests });
+    res.json({ ok: true, requests: db.listPendingRequests(req.user.id) });
 });
 
 app.post("/api/friends/accept", auth, (req, res) => {
     const requestId = Number(req.body?.requestId);
     if (!Number.isSafeInteger(requestId)) return sendError(res, 400, "Некорректная заявка");
-    const request = db.get("SELECT * FROM friend_requests WHERE id = ? AND receiver_id = ? AND status = 'pending'", [requestId, req.user.id]);
+    const request = db.findPendingRequestById(requestId, req.user.id);
     if (!request) return sendError(res, 404, "Заявка не найдена");
-    db.run("UPDATE friend_requests SET status = 'accepted' WHERE id = ?", [request.id]);
-    db.run("INSERT OR IGNORE INTO friends (user_id, friend_id) VALUES (?, ?)", [request.sender_id, request.receiver_id]);
-    db.run("INSERT OR IGNORE INTO friends (user_id, friend_id) VALUES (?, ?)", [request.receiver_id, request.sender_id]);
+    db.setFriendRequestStatus(request.id, "accepted");
+    db.addFriend(request.sender_id, request.receiver_id);
+    db.addFriend(request.receiver_id, request.sender_id);
     io.to(`user:${request.sender_id}`).emit("friend:accepted", publicUser(req.user));
     res.json({ ok: true });
 });
@@ -319,16 +319,17 @@ app.post("/api/friends/accept", auth, (req, res) => {
 app.post("/api/friends/reject", auth, (req, res) => {
     const requestId = Number(req.body?.requestId);
     if (!Number.isSafeInteger(requestId)) return sendError(res, 400, "Некорректная заявка");
-    const result = db.run("UPDATE friend_requests SET status = 'rejected' WHERE id = ? AND receiver_id = ? AND status = 'pending'", [requestId, req.user.id]);
-    if (!result.changes) return sendError(res, 404, "Заявка не найдена");
+    const request = db.findPendingRequestById(requestId, req.user.id);
+    if (!request) return sendError(res, 404, "Заявка не найдена");
+    db.setFriendRequestStatus(request.id, "rejected");
     res.json({ ok: true });
 });
 
 app.delete("/api/friends/:userId", auth, (req, res) => {
     const friendId = Number(req.params.userId);
     if (!Number.isSafeInteger(friendId) || friendId <= 0) return sendError(res, 400, "Некорректный пользователь");
-    db.run("DELETE FROM friends WHERE (user_id = ? AND friend_id = ?) OR (user_id = ? AND friend_id = ?)", [req.user.id, friendId, friendId, req.user.id]);
-    db.run("DELETE FROM friend_requests WHERE (sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?)", [req.user.id, friendId, friendId, req.user.id]);
+    db.removeFriendBoth(req.user.id, friendId);
+    db.deleteRequestsBetween(req.user.id, friendId);
     io.to(`user:${friendId}`).emit("friend:removed", { userId: req.user.id });
     res.json({ ok: true });
 });
@@ -337,17 +338,9 @@ app.get("/api/messages/:userId", auth, (req, res) => {
     const otherId = Number(req.params.userId);
     const before = req.query.before ? Number(req.query.before) : null;
     if (!Number.isSafeInteger(otherId) || otherId <= 0) return sendError(res, 400, "Некорректный пользователь");
-    if (!isFriend(req.user.id, otherId)) return sendError(res, 403, "Переписка доступна только друзьям");
+    if (!db.areFriends(req.user.id, otherId)) return sendError(res, 403, "Переписка доступна только друзьям");
     if (before !== null && (!Number.isSafeInteger(before) || before <= 0)) return sendError(res, 400, "Некорректный курсор");
-    const history = db.all(`
-        SELECT * FROM (
-            SELECT id, sender_id, receiver_id, text, message_type, file_name, file_url, file_size, is_read, created_at
-            FROM messages
-            WHERE ((sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?))
-              AND (? IS NULL OR id < ?)
-            ORDER BY id DESC LIMIT 100
-        ) ORDER BY id ASC
-    `, [req.user.id, otherId, otherId, req.user.id, before, before]);
+    const history = db.listMessages(req.user.id, otherId, before, 100);
     res.json({ ok: true, messages: history, hasMore: history.length === 100 });
 });
 
@@ -357,9 +350,9 @@ app.post("/api/messages", auth, messageLimiter, (req, res) => {
     if (!Number.isSafeInteger(receiverId) || receiverId <= 0) return sendError(res, 400, "Некорректный получатель");
     if (!text) return sendError(res, 400, "Сообщение пустое");
     if (text.length > 5000) return sendError(res, 400, "Сообщение слишком длинное");
-    if (!isFriend(req.user.id, receiverId)) return sendError(res, 403, "Писать можно только друзьям");
-    const result = db.run("INSERT INTO messages (sender_id, receiver_id, text, message_type) VALUES (?, ?, ?, 'text')", [req.user.id, receiverId, text]);
-    const message = db.get("SELECT id, sender_id, receiver_id, text, message_type, file_name, file_url, file_size, is_read, created_at FROM messages WHERE id = ?", [result.lastInsertRowid]);
+    if (!db.areFriends(req.user.id, receiverId)) return sendError(res, 403, "Писать можно только друзьям");
+
+    const message = db.createMessage({ senderId: req.user.id, receiverId, text, messageType: "text" });
     io.to(`user:${receiverId}`).emit("message:new", message);
     io.to(`user:${req.user.id}`).emit("message:sent", message);
     res.status(201).json({ ok: true, message });
@@ -368,19 +361,19 @@ app.post("/api/messages", auth, messageLimiter, (req, res) => {
 app.post("/api/messages/:userId/read", auth, (req, res) => {
     const senderId = Number(req.params.userId);
     if (!Number.isSafeInteger(senderId) || senderId <= 0) return sendError(res, 400, "Некорректный пользователь");
-    if (!isFriend(req.user.id, senderId)) return sendError(res, 403, "Недоступно");
-    const result = db.run("UPDATE messages SET is_read = 1 WHERE sender_id = ? AND receiver_id = ? AND is_read = 0", [senderId, req.user.id]);
-    if (result.changes) io.to(`user:${senderId}`).emit("messages:read", { userId: req.user.id });
-    res.json({ ok: true, updated: result.changes });
+    if (!db.areFriends(req.user.id, senderId)) return sendError(res, 403, "Недоступно");
+    const updated = db.markMessagesRead(senderId, req.user.id);
+    if (updated) io.to(`user:${senderId}`).emit("messages:read", { userId: req.user.id });
+    res.json({ ok: true, updated });
 });
 
 app.delete("/api/messages/:messageId", auth, (req, res) => {
     const messageId = Number(req.params.messageId);
     if (!Number.isSafeInteger(messageId) || messageId <= 0) return sendError(res, 400, "Некорректное сообщение");
-    const message = db.get("SELECT id, sender_id, receiver_id FROM messages WHERE id = ?", [messageId]);
+    const message = db.findMessageById(messageId);
     if (!message) return sendError(res, 404, "Сообщение не найдено");
     if (Number(message.sender_id) !== Number(req.user.id)) return sendError(res, 403, "Можно удалять только свои сообщения");
-    db.run("DELETE FROM messages WHERE id = ?", [messageId]);
+    db.deleteMessage(messageId);
     io.to(`user:${message.receiver_id}`).emit("message:deleted", { id: messageId });
     io.to(`user:${req.user.id}`).emit("message:deleted", { id: messageId });
     res.json({ ok: true });
@@ -388,15 +381,22 @@ app.delete("/api/messages/:messageId", auth, (req, res) => {
 
 app.post("/api/upload", auth, messageLimiter, upload.single("file"), (req, res) => {
     try {
-        if (!req.file) return sendError(res, 400, "Файл не загружен.");
+        if (!req.file) return sendError(res, 400, "Файл не загружен");
         const receiverId = Number(req.body?.receiverId);
         if (!Number.isSafeInteger(receiverId) || receiverId <= 0) return sendError(res, 400, "Некорректный получатель");
-        if (!isFriend(req.user.id, receiverId)) return sendError(res, 403, "Отправлять файлы можно только друзьям");
-        const fileName = String(req.file.originalname || "file").slice(0, 200).replace(/[^\p{L}\p{N}.\-_\s()]/gu, "").trim() || "file";
+        if (!db.areFriends(req.user.id, receiverId)) return sendError(res, 403, "Отправлять файлы можно только друзьям");
+
+        const fileName = displayName(req.file.originalname);
         const fileUrl = `/api/files/${path.basename(req.file.path)}`;
-        const fileSize = req.file.size;
-        const result = db.run("INSERT INTO messages (sender_id, receiver_id, text, message_type, file_name, file_url, file_size) VALUES (?, ?, '', 'file', ?, ?, ?)", [req.user.id, receiverId, fileName, fileUrl, fileSize]);
-        const message = db.get("SELECT id, sender_id, receiver_id, text, message_type, file_name, file_url, file_size, is_read, created_at FROM messages WHERE id = ?", [result.lastInsertRowid]);
+        const message = db.createMessage({
+            senderId: req.user.id,
+            receiverId,
+            text: "",
+            messageType: "file",
+            fileName,
+            fileUrl,
+            fileSize: req.file.size
+        });
         io.to(`user:${receiverId}`).emit("message:new", message);
         io.to(`user:${req.user.id}`).emit("message:sent", message);
         res.status(201).json({ ok: true, message });
@@ -409,22 +409,37 @@ app.post("/api/upload", auth, messageLimiter, upload.single("file"), (req, res) 
 app.get("/api/files/:filename", auth, (req, res) => {
     const filename = path.basename(String(req.params.filename));
     if (!/^[\w.\-]+$/.test(filename)) return sendError(res, 400, "Некорректное имя файла");
-    const months = fs.readdirSync(UPLOADS_DIR, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort().reverse();
+
     let filePath = null;
-    for (const month of months) {
-        const candidate = path.join(UPLOADS_DIR, month, filename);
-        if (fs.existsSync(candidate)) { filePath = candidate; break; }
+    try {
+        const months = fs.readdirSync(UPLOADS_DIR, { withFileTypes: true })
+            .filter((entry) => entry.isDirectory())
+            .map((entry) => entry.name)
+            .sort()
+            .reverse();
+        for (const month of months) {
+            const candidate = path.join(UPLOADS_DIR, month, filename);
+            if (fs.existsSync(candidate)) { filePath = candidate; break; }
+        }
+    } catch (error) {
+        console.error("FILE LOOKUP ERROR:", error);
     }
     if (!filePath) return sendError(res, 404, "Файл не найден");
+
     const fileUrl = `/api/files/${filename}`;
-    const record = db.get("SELECT 1 FROM messages WHERE file_url = ? AND (sender_id = ? OR receiver_id = ?) LIMIT 1", [fileUrl, req.user.id, req.user.id]);
-    if (!record) return sendError(res, 403, "Доступ запрещён");
-    const msg = db.get("SELECT file_name FROM messages WHERE file_url = ? LIMIT 1", [fileUrl]);
-    const downloadName = msg?.file_name || filename;
-    res.setHeader("Content-Disposition", `attachment; filename="=?UTF-8?B?${Buffer.from(downloadName).toString("base64")}?="`);
+    if (!db.canAccessFile(fileUrl, req.user.id)) return sendError(res, 403, "Доступ запрещён");
+
+    const meta = db.findFileByUrl(fileUrl);
+    const downloadName = (meta && meta.file_name) || filename;
+    const ext = path.extname(filename).toLowerCase();
+    const disposition = INLINE_IMAGE_EXTENSIONS.includes(ext) ? "inline" : "attachment";
+    res.setHeader("Content-Disposition", `${disposition}; filename*=UTF-8''${encodeURIComponent(downloadName)}`);
     res.setHeader("X-Content-Type-Options", "nosniff");
+    if (meta && meta.file_size) res.setHeader("Content-Length", String(meta.file_size));
     res.sendFile(filePath);
 });
+
+/* ---------- Реальное время ---------- */
 
 io.use((socket, next) => {
     try {
@@ -444,12 +459,12 @@ io.on("connection", (socket) => {
     if (firstConnection) onlineUsers.set(userId, new Set());
     onlineUsers.get(userId).add(socket.id);
     if (firstConnection) {
-        db.run("UPDATE users SET last_seen = ? WHERE id = ?", [new Date().toISOString(), userId]);
+        db.updateLastSeen(userId, new Date().toISOString());
         notifyFriends(userId, "user:online", { userId });
     }
 
     const sendPresence = () => {
-        const onlineFriendIds = getFriendIds(userId).filter((friendId) => onlineUsers.has(friendId));
+        const onlineFriendIds = db.listFriendIds(userId).filter((friendId) => onlineUsers.has(friendId));
         socket.emit("presence:snapshot", { userIds: onlineFriendIds });
     };
     sendPresence();
@@ -458,7 +473,7 @@ io.on("connection", (socket) => {
     let lastTypingAt = 0;
     const relayTyping = (event, payload) => {
         const receiverId = Number(payload?.receiverId);
-        if (!Number.isSafeInteger(receiverId) || !isFriend(userId, receiverId)) return;
+        if (!Number.isSafeInteger(receiverId) || !db.areFriends(userId, receiverId)) return;
         const now = Date.now();
         if (event === "typing:start" && now - lastTypingAt < 250) return;
         lastTypingAt = now;
@@ -474,11 +489,13 @@ io.on("connection", (socket) => {
         if (!sockets.size) {
             onlineUsers.delete(userId);
             const lastSeen = new Date().toISOString();
-            db.run("UPDATE users SET last_seen = ? WHERE id = ?", [lastSeen, userId]);
+            db.updateLastSeen(userId, lastSeen);
             notifyFriends(userId, "user:offline", { userId, last_seen: lastSeen });
         }
     });
 });
+
+/* ---------- Заглушки и ошибки ---------- */
 
 app.use((req, res) => {
     if (req.path.startsWith("/api/")) return sendError(res, 404, "Маршрут не найден");
@@ -487,21 +504,20 @@ app.use((req, res) => {
 
 app.use((error, req, res, next) => {
     if (error instanceof SyntaxError && "body" in error) return sendError(res, 400, "Некорректный JSON");
+    if (error && error.code === "LIMIT_FILE_SIZE") {
+        return sendError(res, 413, `Файл больше ${Math.round(MAX_FILE_SIZE / 1024 / 1024)} МБ`);
+    }
+    if (error && error.code === "LIMIT_FILE_COUNT") return sendError(res, 400, "Можно прикрепить только один файл");
     console.error("UNHANDLED ERROR:", error);
     return sendError(res, 500, "Внутренняя ошибка сервера");
 });
 
-dbReady.then(() => {
-    server.listen(PORT, HOST, () => {
-        console.log(`ИПК запущен: http://${HOST}:${PORT}`);
-    });
-}).catch((err) => {
-    console.error("DB INIT FAILED:", err);
-    process.exit(1);
+server.listen(PORT, HOST, () => {
+    console.log(`ИПК запущен: http://${HOST}:${PORT} (данные: ${db.DB_FILE})`);
 });
 
 function shutdown() {
-    db.saveNow();
+    try { db.close(); } catch (error) { console.error("DB CLOSE ERROR:", error.message); }
     io.close();
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(1), 5000).unref();

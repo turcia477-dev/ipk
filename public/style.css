@@ -181,6 +181,9 @@ button, input, textarea { -webkit-tap-highlight-color: transparent; }
 .presence-dot { position: absolute; width: 11px; height: 11px; right: -1px; bottom: -1px; border: 2px solid var(--surface-solid); border-radius: 50%; background: #687184; transition: background 0.2s ease, box-shadow 0.2s ease; }
 .presence-dot.online { background: var(--success); box-shadow: 0 0 10px rgba(66, 214, 138, 0.6); }
 
+/* Перетаскивание файлов в переписку */
+.messages.drop-active { outline: 2px dashed var(--accent); outline-offset: -8px; background: rgba(var(--accent-rgb), 0.06); }
+
 /* Auth */
 .auth-screen { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; overflow: auto; padding: 28px; background: var(--bg-deep); }
 .auth-screen::before { content: ""; position: absolute; inset: 0; opacity: 0.38; background-image: linear-gradient(var(--border) 1px, transparent 1px), linear-gradient(90deg, var(--border) 1px, transparent 1px); background-size: 48px 48px; mask-image: radial-gradient(circle at center, black 5%, transparent 72%); }

@@ -1,394 +1,539 @@
 "use strict";
 
-// Простая in-memory база (без sql.js, без файлов — чистый JS)
-let nextUserId = 1;
-let nextRequestId = 1;
-let nextMessageId = 1;
-let nextFriendId = 1;
+/**
+ * ИПК — постоянный слой данных.
+ *
+ * Заменяет прежний самодельный эмулятор SQL (который угадывал смысл запроса
+ * по началу строки и на любом непонятном запросе молча возвращал пустоту).
+ * Теперь это обычные функции с внятными именами.
+ *
+ * Хранение: JSON-файл на диске. Пишем атомарно (временный файл + rename),
+ * с задержкой 200 мс при частых изменениях и принудительным сбросом
+ * при остановке процесса. Никаких нативных зависимостей — важно, потому что
+ * better-sqlite3 и sql.js на бесплатном тарифе Bonto не собираются.
+ */
 
-const users = new Map();
-const sessions = new Map();
-const friendRequests = new Map();
-const friends = new Map();
-const messages = new Map();
+const fs = require("fs");
+const path = require("path");
 
-const db = {
-    run(sql, params = []) {
-        const sql_lower = sql.trim().toLowerCase();
-        
-        // DELETE FROM sessions — clean expired or old sessions
-        if (sql_lower.startsWith("delete from sessions")) {
-            if (sql_lower.includes("expires_at") || sql_lower.includes("token not in")) {
-                for (const [token, sess] of sessions) {
-                    if (!sess.expires_at || new Date(sess.expires_at) <= new Date()) {
-                        sessions.delete(token);
-                    }
+const DATA_DIR = process.env.IPK_DATA_DIR || path.join(__dirname, "..", "data");
+const DB_FILE = path.join(DATA_DIR, "ipk-store.json");
+const TMP_FILE = `${DB_FILE}.tmp`;
+const FLUSH_DEBOUNCE_MS = 200;
+
+function emptyState() {
+    return {
+        version: 2,
+        counters: { userId: 1, requestId: 1, messageId: 1, friendId: 1 },
+        users: {},
+        sessions: {},
+        friendRequests: {},
+        friends: {},
+        messages: {}
+    };
+}
+
+let state = emptyState();
+let flushTimer = null;
+let dirty = false;
+
+function friendKey(userId, friendId) {
+    return `${Number(userId)}_${Number(friendId)}`;
+}
+
+function nowIso() {
+    return new Date().toISOString();
+}
+
+/* ---------- Загрузка и сохранение ---------- */
+
+function load() {
+    try {
+        if (!fs.existsSync(DB_FILE)) return;
+        const raw = fs.readFileSync(DB_FILE, "utf8");
+        if (!raw.trim()) return;
+        const parsed = JSON.parse(raw);
+        const base = emptyState();
+        state = {
+            version: 2,
+            counters: Object.assign(base.counters, parsed.counters || {}),
+            users: parsed.users || {},
+            sessions: parsed.sessions || {},
+            friendRequests: parsed.friendRequests || {},
+            friends: parsed.friends || {},
+            messages: parsed.messages || {}
+        };
+        pruneExpiredSessions();
+        console.log(`Хранилище загружено: ${DB_FILE}`);
+    } catch (error) {
+        console.error("Не удалось прочитать хранилище, начинаю с пустого:", error.message);
+        state = emptyState();
+    }
+}
+
+function flushSync() {
+    if (!dirty) return;
+    try {
+        fs.mkdirSync(DATA_DIR, { recursive: true });
+        fs.writeFileSync(TMP_FILE, JSON.stringify(state), "utf8");
+        fs.renameSync(TMP_FILE, DB_FILE);
+        dirty = false;
+    } catch (error) {
+        console.error("Не удалось сохранить хранилище:", error.message);
+    }
+}
+
+/**
+ * По умолчанию пишем на диск сразу же: сообщение не должно потеряться, если
+ * контейнер уснёт или его прибьют через секунду после отправки.
+ * Для некритичных обновлений (отметка «был в сети») передаём false — тогда
+ * запись склеивается и уходит раз в FLUSH_DEBOUNCE_MS.
+ */
+function scheduleFlush(immediate = true) {
+    dirty = true;
+    if (immediate) {
+        flushSync();
+        return;
+    }
+    if (flushTimer) return;
+    flushTimer = setTimeout(() => {
+        flushTimer = null;
+        flushSync();
+    }, FLUSH_DEBOUNCE_MS);
+}
+
+function close() {
+    if (flushTimer) {
+        clearTimeout(flushTimer);
+        flushTimer = null;
+    }
+    flushSync();
+}
+
+/* ---------- Пользователи ---------- */
+
+function findByUsername(username) {
+    const needle = String(username || "").toLowerCase();
+    if (!needle) return null;
+    for (const user of Object.values(state.users)) {
+        if (user.username.toLowerCase() === needle) return user;
+    }
+    return null;
+}
+
+function createUser(username, passwordHash) {
+    const id = state.counters.userId++;
+    state.users[id] = {
+        id,
+        username,
+        password: passwordHash,
+        avatar: "",
+        created_at: nowIso(),
+        last_seen: null
+    };
+    scheduleFlush();
+    return state.users[id];
+}
+
+function findUserById(id) {
+    return state.users[Number(id)] || null;
+}
+
+function findUserWithPasswordByUsername(username) {
+    return findByUsername(username);
+}
+
+function usernameTakenByOther(username, userId) {
+    const user = findByUsername(username);
+    return Boolean(user && Number(user.id) !== Number(userId));
+}
+
+function updateUsername(userId, username) {
+    const user = state.users[Number(userId)];
+    if (!user) return 0;
+    user.username = username;
+    scheduleFlush();
+    return 1;
+}
+
+function updateLastSeen(userId, iso) {
+    const user = state.users[Number(userId)];
+    if (!user) return 0;
+    user.last_seen = iso;
+    // Некритично: при частых переподключениях запись склеивается.
+    scheduleFlush(false);
+    return 1;
+}
+
+/* ---------- Сессии ---------- */
+
+function pruneExpiredSessions() {
+    const now = Date.now();
+    for (const [hash, session] of Object.entries(state.sessions)) {
+        if (!session.expires_at || Date.parse(session.expires_at) <= now) {
+            delete state.sessions[hash];
+        }
+    }
+}
+
+function deleteExpiredSessions() {
+    const before = Object.keys(state.sessions).length;
+    pruneExpiredSessions();
+    if (Object.keys(state.sessions).length !== before) scheduleFlush(false);
+}
+
+function createSession(tokenHash, userId, expiresAt) {
+    state.sessions[tokenHash] = {
+        token: tokenHash,
+        user_id: Number(userId),
+        created_at: nowIso(),
+        expires_at: expiresAt
+    };
+    scheduleFlush();
+    return 1;
+}
+
+function deleteSession(tokenHash) {
+    if (!state.sessions[tokenHash]) return 0;
+    delete state.sessions[tokenHash];
+    scheduleFlush();
+    return 1;
+}
+
+function listUserSessions(userId) {
+    const now = Date.now();
+    return Object.values(state.sessions)
+        .filter((s) => Number(s.user_id) === Number(userId) && s.expires_at && Date.parse(s.expires_at) > now)
+        .sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")));
+}
+
+function findUserBySession(tokenHash) {
+    const session = state.sessions[tokenHash];
+    if (!session) return null;
+    if (!session.expires_at || Date.parse(session.expires_at) <= Date.now()) return null;
+    const user = state.users[session.user_id];
+    if (!user) return null;
+    return { id: user.id, username: user.username, avatar: user.avatar || "", session_hash: tokenHash };
+}
+
+/* ---------- Друзья ---------- */
+
+function areFriends(userId, friendId) {
+    return Boolean(state.friends[friendKey(userId, friendId)]);
+}
+
+function addFriend(userId, friendId) {
+    const key = friendKey(userId, friendId);
+    if (state.friends[key]) return 0;
+    state.friends[key] = {
+        id: state.counters.friendId++,
+        user_id: Number(userId),
+        friend_id: Number(friendId),
+        created_at: nowIso()
+    };
+    scheduleFlush();
+    return 1;
+}
+
+function removeFriendBoth(a, b) {
+    const keys = [friendKey(a, b), friendKey(b, a)];
+    let removed = 0;
+    for (const key of keys) {
+        if (state.friends[key]) {
+            delete state.friends[key];
+            removed += 1;
+        }
+    }
+    if (removed) scheduleFlush();
+    return removed;
+}
+
+function listFriendIds(userId) {
+    return Object.values(state.friends)
+        .filter((f) => Number(f.user_id) === Number(userId))
+        .map((f) => Number(f.friend_id));
+}
+
+function lastMessageBetween(a, b) {
+    let best = null;
+    for (const message of Object.values(state.messages)) {
+        const fromA = Number(message.sender_id) === Number(a) && Number(message.receiver_id) === Number(b);
+        const fromB = Number(message.sender_id) === Number(b) && Number(message.receiver_id) === Number(a);
+        if (!fromA && !fromB) continue;
+        if (!best || Number(message.id) > Number(best.id)) best = message;
+    }
+    return best;
+}
+
+function unreadFrom(senderId, receiverId) {
+    let count = 0;
+    for (const message of Object.values(state.messages)) {
+        if (Number(message.sender_id) === Number(senderId) &&
+            Number(message.receiver_id) === Number(receiverId) &&
+            Number(message.is_read) === 0) count += 1;
+    }
+    return count;
+}
+
+function listFriendsWithMeta(userId) {
+    const result = [];
+    for (const link of Object.values(state.friends)) {
+        if (Number(link.user_id) !== Number(userId)) continue;
+        const friend = state.users[link.friend_id];
+        if (!friend) continue;
+        const last = lastMessageBetween(link.user_id, friend.id);
+        result.push({
+            id: friend.id,
+            username: friend.username,
+            avatar: friend.avatar || "",
+            last_seen: friend.last_seen || "",
+            last_message: last ? last.text : "",
+            last_message_at: last ? last.created_at : "",
+            unread_count: unreadFrom(friend.id, link.user_id),
+            _sortAt: (last && last.created_at) || link.created_at || ""
+        });
+    }
+    result.sort((a, b) => String(b._sortAt).localeCompare(String(a._sortAt)));
+    result.forEach((row) => delete row._sortAt);
+    return result;
+}
+
+/* ---------- Поиск пользователей ---------- */
+
+function searchUsers(meId, query, limit = 20) {
+    const needle = String(query || "").toLowerCase();
+    if (!needle) return [];
+    const result = [];
+    for (const user of Object.values(state.users)) {
+        if (Number(user.id) === Number(meId)) continue;
+        if (!user.username.toLowerCase().includes(needle)) continue;
+
+        let relation = "none";
+        if (areFriends(meId, user.id)) {
+            relation = "friend";
+        } else {
+            for (const request of Object.values(state.friendRequests)) {
+                if (request.status !== "pending") continue;
+                if (Number(request.sender_id) === Number(meId) && Number(request.receiver_id) === Number(user.id)) {
+                    relation = "sent";
+                    break;
                 }
-            } else if (sql_lower.includes("token =") || sql_lower.includes("token=")) {
-                // Delete specific session by token (params[0] is the token hash)
-                for (const [token] of sessions) {
-                    if (token === params[0]) { sessions.delete(token); break; }
-                }
-            } else if (sql_lower.includes("user_id =") || sql_lower.includes("user_id=")) {
-                // Delete all sessions for a user (not currently used but safe)
-                for (const [token, sess] of sessions) {
-                    if (Number(sess.user_id) === Number(params[0])) sessions.delete(token);
-                }
-            }
-            return { changes: 1, lastInsertRowid: 0 };
-        }
-        
-        // INSERT INTO users
-        if (sql_lower.startsWith("insert into users")) {
-            const id = nextUserId++;
-            users.set(id, { id, username: params[0], password: params[1], avatar: "", created_at: new Date().toISOString(), last_seen: null });
-            return { changes: 1, lastInsertRowid: id };
-        }
-        
-        // INSERT INTO sessions
-        if (sql_lower.startsWith("insert into sessions")) {
-            sessions.set(params[0], { token: params[0], user_id: params[1], created_at: new Date().toISOString(), expires_at: params[2] });
-            return { changes: 1, lastInsertRowid: 0 };
-        }
-        
-        // INSERT INTO friend_requests
-        if (sql_lower.startsWith("insert into friend_requests")) {
-            const id = nextRequestId++;
-            friendRequests.set(id, { id, sender_id: params[0], receiver_id: params[1], status: "pending", created_at: new Date().toISOString() });
-            return { changes: 1, lastInsertRowid: id };
-        }
-        
-        // INSERT INTO friends (also handles INSERT OR IGNORE INTO friends)
-        if (sql_lower.startsWith("insert") && sql_lower.includes("into friends")) {
-            const key = `${params[0]}_${params[1]}`;
-            if (friends.has(key)) return { changes: 0, lastInsertRowid: 0 }; // INSERT OR IGNORE
-            const id = nextFriendId++;
-            friends.set(key, { id, user_id: params[0], friend_id: params[1], created_at: new Date().toISOString() });
-            return { changes: 1, lastInsertRowid: id };
-        }
-        
-        // INSERT INTO messages
-        if (sql_lower.startsWith("insert") && sql_lower.includes("into messages")) {
-            const id = nextMessageId++;
-            const msg = {
-                id, sender_id: params[0], receiver_id: params[1], text: params[2] || "",
-                message_type: params[3] || "text", file_name: params[4] || "",
-                file_url: params[5] || "", file_size: params[6] || 0, is_read: 0,
-                created_at: new Date().toISOString()
-            };
-            messages.set(id, msg);
-            return { changes: 1, lastInsertRowid: id };
-        }
-        
-        // UPDATE users SET username
-        if (sql_lower.startsWith("update users set username")) {
-            const u = users.get(Number(params[1]));
-            if (u) u.username = params[0];
-            return { changes: u ? 1 : 0, lastInsertRowid: 0 };
-        }
-        
-        // UPDATE users SET last_seen
-        if (sql_lower.startsWith("update users set last_seen")) {
-            const u = users.get(Number(params[1]));
-            if (u) u.last_seen = params[0];
-            return { changes: u ? 1 : 0, lastInsertRowid: 0 };
-        }
-        
-        // UPDATE friend_requests SET status
-        if (sql_lower.startsWith("update friend_requests set status")) {
-            let changes = 0;
-            for (const [id, req] of friendRequests) {
-                if (req.id === Number(params[1]) || id === Number(params[1])) {
-                    // Determine new status from SQL — default to whatever the SQL says
-                    if (sql_lower.includes("'accepted'") || sql_lower.includes("\"accepted\"")) req.status = "accepted";
-                    else if (sql_lower.includes("'rejected'") || sql_lower.includes("\"rejected\"")) req.status = "rejected";
-                    else req.status = "accepted"; // default
-                    changes = 1;
+                if (Number(request.sender_id) === Number(user.id) && Number(request.receiver_id) === Number(meId)) {
+                    relation = "received";
                     break;
                 }
             }
-            return { changes, lastInsertRowid: 0 };
         }
-        
-        // UPDATE messages SET is_read
-        if (sql_lower.startsWith("update messages set is_read")) {
-            let changes = 0;
-            for (const [, msg] of messages) {
-                if (Number(msg.sender_id) === Number(params[0]) && Number(msg.receiver_id) === Number(params[1]) && msg.is_read === 0) {
-                    msg.is_read = 1; changes++;
-                }
-            }
-            return { changes, lastInsertRowid: 0 };
-        }
-        
-        // DELETE FROM friends (handles both single and OR conditions)
-        if (sql_lower.startsWith("delete from friends")) {
-            if (sql_lower.includes(" or ")) {
-                // DELETE FROM friends WHERE (user_id = ? AND friend_id = ?) OR (user_id = ? AND friend_id = ?)
-                const uid = Number(params[0]); const fid = Number(params[1]);
-                const uid2 = Number(params[2]); const fid2 = Number(params[3]);
-                friends.delete(`${uid}_${fid}`);
-                friends.delete(`${fid}_${uid}`);
-                friends.delete(`${uid2}_${fid2}`);
-                friends.delete(`${fid2}_${uid2}`);
-            } else {
-                // DELETE FROM friends WHERE user_id = ? AND friend_id = ?
-                const uid = Number(params[0]); const fid = Number(params[1]);
-                friends.delete(`${uid}_${fid}`);
-                friends.delete(`${fid}_${uid}`);
-            }
-            return { changes: 1, lastInsertRowid: 0 };
-        }
-        
-        // DELETE FROM messages
-        if (sql_lower.startsWith("delete from messages")) {
-            messages.delete(Number(params[0]));
-            return { changes: 1, lastInsertRowid: 0 };
-        }
-        
-        // DELETE FROM friend_requests
-        if (sql_lower.startsWith("delete from friend_requests")) {
-            if (sql_lower.includes(" or ")) {
-                // DELETE FROM friend_requests WHERE (sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?)
-                for (const [id, req] of friendRequests) {
-                    if ((Number(req.sender_id) === Number(params[0]) && Number(req.receiver_id) === Number(params[1])) ||
-                        (Number(req.sender_id) === Number(params[2]) && Number(req.receiver_id) === Number(params[3]))) {
-                        friendRequests.delete(id);
-                    }
-                }
-            } else {
-                // Simple delete by id or condition
-                for (const [id, req] of friendRequests) {
-                    if (req.id === Number(params[0]) || req.sender_id === Number(params[0])) {
-                        friendRequests.delete(id);
-                    }
-                }
-            }
-            return { changes: 1, lastInsertRowid: 0 };
-        }
-        
-        return { changes: 0, lastInsertRowid: 0 };
-    },
-    
-    get(sql, params = []) {
-        const sql_lower = sql.trim().toLowerCase();
-        
-        // SELECT 1 FROM users WHERE username = ?
-        if (sql_lower.startsWith("select 1 from users where username")) {
-            for (const u of users.values()) {
-                if (u.username.toLowerCase() === String(params[0]).toLowerCase()) return { 1: 1 };
-            }
-            return null;
-        }
-        
-        // SELECT 1 FROM friends WHERE user_id = ? AND friend_id = ?
-        if (sql_lower.startsWith("select 1 from friends")) {
-            const uid = Number(params[0]); const fid = Number(params[1]);
-            return friends.has(`${uid}_${fid}`) ? { 1: 1 } : null;
-        }
-        
-        // SELECT 1 FROM friend_requests WHERE sender_id = ? AND receiver_id = ? AND status = 'pending'
-        if (sql_lower.startsWith("select 1 from friend_requests where sender_id")) {
-            for (const r of friendRequests.values()) {
-                if (Number(r.sender_id) === Number(params[0]) && Number(r.receiver_id) === Number(params[1]) && r.status === "pending") return { id: 1 };
-            }
-            return null;
-        }
-        
-        // SELECT * FROM friend_requests WHERE id = ? AND receiver_id = ? AND status = 'pending'
-        if (sql_lower.startsWith("select * from friend_requests where id")) {
-            for (const r of friendRequests.values()) {
-                if (r.id === Number(params[0]) && Number(r.receiver_id) === Number(params[1]) && r.status === "pending") return r;
-            }
-            return null;
-        }
-        
-        // SELECT id, status FROM friend_requests WHERE sender_id = ? AND receiver_id = ?
-        if (sql_lower.startsWith("select id, status from friend_requests where sender_id")) {
-            for (const r of friendRequests.values()) {
-                if (Number(r.sender_id) === Number(params[0]) && Number(r.receiver_id) === Number(params[1])) return r;
-            }
-            return null;
-        }
-        
-        // SELECT * FROM users WHERE username = ?
-        if (sql_lower.startsWith("select * from users where username")) {
-            for (const u of users.values()) {
-                if (u.username.toLowerCase() === String(params[0]).toLowerCase()) return u;
-            }
-            return null;
-        }
-        
-        // SELECT id, username, avatar FROM users WHERE id = ?
-        if (sql_lower.startsWith("select id, username, avatar from users where id")) {
-            return users.get(Number(params[0])) || null;
-        }
-        
-        // SELECT id, username, avatar FROM messages WHERE id = ?  (also handles full message select)
-        if (sql_lower.startsWith("select id, sender_id, receiver_id, text, message_type, file_name, file_url, file_size, is_read, created_at from messages where id")) {
-            return messages.get(Number(params[0])) || null;
-        }
-        
-        // SELECT id, sender_id, receiver_id FROM messages WHERE id = ?
-        if (sql_lower.startsWith("select id, sender_id, receiver_id from messages where id")) {
-            return messages.get(Number(params[0])) || null;
-        }
-        
-        // SELECT users.id, ... (getUserByToken) — join sessions + users
-        if (sql_lower.startsWith("select users.id")) {
-            for (const [token, sess] of sessions) {
-                if (token === params[0] && sess.expires_at && new Date(sess.expires_at) > new Date()) {
-                    const u = users.get(sess.user_id);
-                    if (u) return { id: u.id, username: u.username, avatar: u.avatar, session_hash: token };
-                }
-            }
-            return null;
-        }
-        
-        // SELECT 1 FROM users WHERE username = ? AND id != ?
-        if (sql_lower.startsWith("select 1 from users where username = ? and id !=") || 
-            sql_lower.startsWith("select 1 from users where username = ? and id !=")) {
-            for (const u of users.values()) {
-                if (u.username.toLowerCase() === String(params[0]).toLowerCase() && u.id !== Number(params[1])) return { 1: 1 };
-            }
-            return null;
-        }
-        
-        // SELECT file_name FROM messages WHERE file_url = ? LIMIT 1
-        if (sql_lower.startsWith("select file_name from messages where file_url")) {
-            for (const m of messages.values()) {
-                if (m.file_url === params[0]) return { file_name: m.file_name };
-            }
-            return null;
-        }
-        
-        // SELECT 1 FROM messages WHERE file_url = ? AND (sender_id = ? OR receiver_id = ?) LIMIT 1
-        if (sql_lower.startsWith("select 1 from messages where file_url")) {
-            for (const m of messages.values()) {
-                if (m.file_url === params[0] && (Number(m.sender_id) === Number(params[1]) || Number(m.receiver_id) === Number(params[2]))) return { 1: 1 };
-            }
-            return null;
-        }
-        
-        return null;
-    },
-    
-    all(sql, params = []) {
-        const sql_lower = sql.trim().toLowerCase();
-        
-        // SELECT friend_id FROM friends WHERE user_id = ?
-        if (sql_lower.startsWith("select friend_id from friends where user_id")) {
-            const result = [];
-            for (const f of friends.values()) {
-                if (Number(f.user_id) === Number(params[0])) result.push({ friend_id: f.friend_id });
-            }
-            return result;
-        }
-        
-        // SELECT u.id, u.username, u.avatar, ... — friends list OR user search
-        if (sql_lower.startsWith("select u.id, u.username, u.avatar")) {
-            // Friends list query has "u.last_seen" in SELECT; search query has "CASE" instead
-            if (sql_lower.includes("u.last_seen")) {
-                // Friends list query
-                const result = [];
-                for (const f of friends.values()) {
-                    if (Number(f.user_id) === Number(params[0])) {
-                        const u = users.get(f.friend_id);
-                        if (u) {
-                            let lastMsg = null;
-                            let lastMsgAt = null;
-                            let unread = 0;
-                            for (const m of messages.values()) {
-                                if ((Number(m.sender_id) === Number(f.user_id) && Number(m.receiver_id) === u.id) ||
-                                    (Number(m.sender_id) === u.id && Number(m.receiver_id) === Number(f.user_id))) {
-                                    if (!lastMsgAt || m.created_at > lastMsgAt) {
-                                        lastMsg = m.text; lastMsgAt = m.created_at;
-                                    }
-                                }
-                                if (Number(m.sender_id) === u.id && Number(m.receiver_id) === Number(f.user_id) && m.is_read === 0) unread++;
-                            }
-                            result.push({ id: u.id, username: u.username, avatar: u.avatar, last_seen: u.last_seen || "", last_message: lastMsg || "", last_message_at: lastMsgAt || "", unread_count: unread });
-                        }
-                    }
-                }
-                result.sort((a, b) => (b.last_message_at || "").localeCompare(a.last_message_at || ""));
-                return result;
-            }
-            // Otherwise: user search query
-            // Params: [req.user.id, req.user.id, req.user.id, req.user.id, "%q%", q]
-            const q = String(params[4] || "").replace(/%/g, "").toLowerCase();
-            const myId = Number(params[0]);
-            const result = [];
-            for (const u of users.values()) {
-                if (u.id !== Number(params[3]) && u.username.toLowerCase().includes(q)) {
-                    let relation = "none";
-                    if (friends.has(`${myId}_${u.id}`)) relation = "friend";
-                    else {
-                        for (const r of friendRequests.values()) {
-                            if (Number(r.sender_id) === myId && Number(r.receiver_id) === u.id && r.status === "pending") { relation = "sent"; break; }
-                            if (Number(r.sender_id) === u.id && Number(r.receiver_id) === myId && r.status === "pending") { relation = "received"; break; }
-                        }
-                    }
-                    result.push({ id: u.id, username: u.username, avatar: u.avatar, relation });
-                }
-            }
-            result.sort((a, b) => a.username.localeCompare(b.username));
-            return result.slice(0, 20);
-        }
-        
-        // SELECT r.id, u.id as user_id, ... — friend requests list
-        if (sql_lower.startsWith("select r.id, u.id as user_id") || sql_lower.startsWith("select r.id, u.id as user_id")) {
-            const result = [];
-            for (const r of friendRequests.values()) {
-                if (Number(r.receiver_id) === Number(params[0]) && r.status === "pending") {
-                    const u = users.get(r.sender_id);
-                    if (u) result.push({ id: r.id, user_id: u.id, username: u.username, avatar: u.avatar, created_at: r.created_at });
-                }
-            }
-            result.sort((a, b) => b.created_at.localeCompare(a.created_at));
-            return result;
-        }
-        
-        // Messages history — SELECT * FROM (SELECT ... ) or SELECT id, sender_id, ...
-        if (sql_lower.startsWith("select * from (") || sql_lower.startsWith("select id, sender_id")) {
-            const uid = Number(params[0]); const oid = Number(params[1]);
-            const before = params[4] ? Number(params[4]) : null;
-            const result = [];
-            for (const m of messages.values()) {
-                if ((Number(m.sender_id) === uid && Number(m.receiver_id) === oid) ||
-                    (Number(m.sender_id) === oid && Number(m.receiver_id) === uid)) {
-                    if (before === null || m.id < before) result.push(m);
-                }
-            }
-            result.sort((a, b) => b.id - a.id);
-            const limited = result.slice(0, 100);
-            limited.sort((a, b) => a.id - b.id);
-            return limited;
-        }
-        
-        return [];
-    },
-    
-    saveNow() { /* noop — in-memory, nothing to save */ },
-    
-    // Helper for session cleanup — iterate all sessions
-    _iterateSessions() {
-        return sessions.entries();
-    },
-    
-    // Helper for debugging
-    _stats() {
-        return {
-            users: users.size,
-            sessions: sessions.size,
-            friendRequests: friendRequests.size,
-            friends: friends.size,
-            messages: messages.size
-        };
+        result.push({ id: user.id, username: user.username, avatar: user.avatar || "", relation });
     }
+    result.sort((a, b) => {
+        const aExact = a.username.toLowerCase() === needle ? 0 : 1;
+        const bExact = b.username.toLowerCase() === needle ? 0 : 1;
+        if (aExact !== bExact) return aExact - bExact;
+        return a.username.localeCompare(b.username, "ru");
+    });
+    return result.slice(0, limit);
+}
+
+/* ---------- Заявки в друзья ---------- */
+
+function findRequestBetween(senderId, receiverId) {
+    for (const request of Object.values(state.friendRequests)) {
+        if (Number(request.sender_id) === Number(senderId) &&
+            Number(request.receiver_id) === Number(receiverId)) return request;
+    }
+    return null;
+}
+
+function findPendingRequestById(requestId, receiverId) {
+    const request = state.friendRequests[Number(requestId)];
+    if (!request) return null;
+    if (Number(request.receiver_id) !== Number(receiverId)) return null;
+    if (request.status !== "pending") return null;
+    return request;
+}
+
+function createFriendRequest(senderId, receiverId) {
+    const id = state.counters.requestId++;
+    state.friendRequests[id] = {
+        id,
+        sender_id: Number(senderId),
+        receiver_id: Number(receiverId),
+        status: "pending",
+        created_at: nowIso()
+    };
+    scheduleFlush();
+    return state.friendRequests[id];
+}
+
+function setFriendRequestStatus(requestId, status) {
+    const request = state.friendRequests[Number(requestId)];
+    if (!request) return 0;
+    request.status = status;
+    request.updated_at = nowIso();
+    if (status === "pending") request.created_at = nowIso();
+    scheduleFlush();
+    return 1;
+}
+
+function listPendingRequests(receiverId) {
+    return Object.values(state.friendRequests)
+        .filter((r) => Number(r.receiver_id) === Number(receiverId) && r.status === "pending")
+        .map((r) => {
+            const sender = state.users[r.sender_id];
+            if (!sender) return null;
+            return {
+                id: r.id,
+                user_id: sender.id,
+                username: sender.username,
+                avatar: sender.avatar || "",
+                created_at: r.created_at
+            };
+        })
+        .filter(Boolean)
+        .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+}
+
+function deleteRequestsBetween(a, b) {
+    let removed = 0;
+    for (const [id, request] of Object.entries(state.friendRequests)) {
+        const direct = Number(request.sender_id) === Number(a) && Number(request.receiver_id) === Number(b);
+        const reverse = Number(request.sender_id) === Number(b) && Number(request.receiver_id) === Number(a);
+        if (direct || reverse) {
+            delete state.friendRequests[id];
+            removed += 1;
+        }
+    }
+    if (removed) scheduleFlush();
+    return removed;
+}
+
+/* ---------- Сообщения ---------- */
+
+function createMessage({ senderId, receiverId, text = "", messageType = "text", fileName = "", fileUrl = "", fileSize = 0 }) {
+    const id = state.counters.messageId++;
+    state.messages[id] = {
+        id,
+        sender_id: Number(senderId),
+        receiver_id: Number(receiverId),
+        text: text || "",
+        message_type: messageType || "text",
+        file_name: fileName || "",
+        file_url: fileUrl || "",
+        file_size: Number(fileSize) || 0,
+        is_read: 0,
+        created_at: nowIso()
+    };
+    scheduleFlush();
+    return state.messages[id];
+}
+
+function findMessageById(messageId) {
+    return state.messages[Number(messageId)] || null;
+}
+
+function listMessages(userId, otherId, before = null, limit = 100) {
+    const matched = [];
+    for (const message of Object.values(state.messages)) {
+        const direct = Number(message.sender_id) === Number(userId) && Number(message.receiver_id) === Number(otherId);
+        const reverse = Number(message.sender_id) === Number(otherId) && Number(message.receiver_id) === Number(userId);
+        if (!direct && !reverse) continue;
+        if (before !== null && !(Number(message.id) < Number(before))) continue;
+        matched.push(message);
+    }
+    matched.sort((a, b) => Number(b.id) - Number(a.id));
+    const page = matched.slice(0, limit);
+    page.sort((a, b) => Number(a.id) - Number(b.id));
+    return page;
+}
+
+function markMessagesRead(senderId, receiverId) {
+    let changed = 0;
+    for (const message of Object.values(state.messages)) {
+        if (Number(message.sender_id) === Number(senderId) &&
+            Number(message.receiver_id) === Number(receiverId) &&
+            Number(message.is_read) === 0) {
+            message.is_read = 1;
+            changed += 1;
+        }
+    }
+    if (changed) scheduleFlush();
+    return changed;
+}
+
+function deleteMessage(messageId) {
+    const id = Number(messageId);
+    if (!state.messages[id]) return 0;
+    delete state.messages[id];
+    scheduleFlush();
+    return 1;
+}
+
+function canAccessFile(fileUrl, userId) {
+    for (const message of Object.values(state.messages)) {
+        if (message.file_url !== fileUrl) continue;
+        if (Number(message.sender_id) === Number(userId) || Number(message.receiver_id) === Number(userId)) return true;
+    }
+    return false;
+}
+
+function findFileByUrl(fileUrl) {
+    for (const message of Object.values(state.messages)) {
+        if (message.file_url === fileUrl) return { file_name: message.file_name, file_size: message.file_size };
+    }
+    return null;
+}
+
+/* ---------- Служебное ---------- */
+
+function getStats() {
+    return {
+        file: DB_FILE,
+        users: Object.keys(state.users).length,
+        sessions: Object.keys(state.sessions).length,
+        friendRequests: Object.keys(state.friendRequests).length,
+        friends: Object.keys(state.friends).length,
+        messages: Object.keys(state.messages).length,
+        dirty
+    };
+}
+
+load();
+
+module.exports = {
+    DATA_DIR,
+    DB_FILE,
+    createUser,
+    findByUsername,
+    findUserById,
+    usernameTakenByOther,
+    updateUsername,
+    updateLastSeen,
+    deleteExpiredSessions,
+    createSession,
+    deleteSession,
+    listUserSessions,
+    findUserBySession,
+    areFriends,
+    addFriend,
+    removeFriendBoth,
+    listFriendIds,
+    listFriendsWithMeta,
+    searchUsers,
+    findRequestBetween,
+    findPendingRequestById,
+    createFriendRequest,
+    setFriendRequestStatus,
+    listPendingRequests,
+    deleteRequestsBetween,
+    createMessage,
+    findMessageById,
+    listMessages,
+    markMessagesRead,
+    deleteMessage,
+    canAccessFile,
+    findFileByUrl,
+    getStats,
+    flushSync,
+    close
 };
-
-const dbReady = Promise.resolve(db);
-console.log("In-memory JS database ready v2.2.1");
-
-module.exports = { db, dbReady };

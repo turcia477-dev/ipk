@@ -346,6 +346,10 @@ async function refreshFriends(options = {}) {
             if (updated) currentChatUser = { ...currentChatUser, ...updated };
         }
         recountUnread();
+        // Сервер сообщает «друг в сети» только при его первом подключении.
+        // Поэтому после каждого обновления списка спрашиваем актуальный статус —
+        // иначе новый друг, который уже был онлайн, выглядел как «не в сети».
+        if (socket?.connected) socket.emit("presence:get");
         if (options.toast) showToast("Готово", "Список обновлён");
     } catch (error) {
         if (IPK.getToken()) showToast("Не удалось обновить", error.message);
@@ -740,28 +744,63 @@ document.addEventListener("click", (event) => {
     if (!emojiPicker.contains(event.target) && event.target !== emojiButton) toggleEmojiPicker(false);
 });
 
-/* File upload */
+/* File upload — любые типы файлов, вставка из буфера, перетаскивание */
 let fileUploadInProgress = false;
-attachButton?.addEventListener("click", () => fileInput?.click());
-fileInput?.addEventListener("change", async () => {
-    const file = fileInput.files[0];
-    if (!file || !currentChatUser) return;
-    if (file.size > 50 * 1024 * 1024) {
-        showToast("Файл слишком большой", "Максимум 50 МБ");
-        fileInput.value = "";
+let maxUploadSize = 25 * 1024 * 1024;
+
+function formatMaxSize(bytes) {
+    const mb = bytes / (1024 * 1024);
+    return `${mb % 1 === 0 ? mb : mb.toFixed(1)} МБ`;
+}
+
+async function loadUploadLimit() {
+    try {
+        const response = await fetch("/api/status");
+        const data = await response.json();
+        if (Number(data?.maxFileSize) > 0) maxUploadSize = Number(data.maxFileSize);
+    } catch (error) { /* остаётся значение по умолчанию */ }
+}
+
+function clipboardFiles(dataTransfer) {
+    return Array.from(dataTransfer?.items || [])
+        .filter((item) => item.kind === "file")
+        .map((item) => {
+            const file = item.getAsFile();
+            if (!file) return null;
+            // Скриншот из буфера приходит без имени — даём осмысленное
+            if (!file.name) {
+                const ext = (file.type.split("/")[1] || "png").replace("jpeg", "jpg");
+                const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+                return new File([file], `скриншот-${stamp}.${ext}`, { type: file.type });
+            }
+            return file;
+        })
+        .filter(Boolean);
+}
+
+async function uploadFile(file) {
+    if (!file || !currentChatUser || fileUploadInProgress) return;
+    if (!file.size) {
+        showToast("Пустой файл", "Отправлять нечего");
         return;
     }
-    if (fileUploadInProgress) return;
-    fileUploadInProgress = true;
-    attachButton.disabled = true;
+    if (file.size > maxUploadSize) {
+        showToast("Файл слишком большой", `Максимум ${formatMaxSize(maxUploadSize)}`);
+        return;
+    }
 
-    const localId = `pending-file-${Date.now()}`;
+    fileUploadInProgress = true;
+    if (attachButton) attachButton.disabled = true;
+
+    const localId = `pending-file-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
     const receiverId = Number(currentChatUser.id);
+    const fileName = file.name || "файл";
+
     renderMessage({
         sender_id: currentUser.id,
         receiver_id: receiverId,
         message_type: "file",
-        file_name: file.name,
+        file_name: fileName,
         file_size: file.size,
         file_url: "",
         created_at: new Date().toISOString(),
@@ -771,12 +810,11 @@ fileInput?.addEventListener("change", async () => {
 
     try {
         const formData = new FormData();
-        formData.append("file", file);
+        formData.append("file", file, fileName);
         formData.append("receiverId", String(receiverId));
-        const token = IPK.getToken();
         const response = await fetch("/api/upload", {
             method: "POST",
-            headers: { Authorization: `Bearer ${token}` },
+            headers: { Authorization: `Bearer ${IPK.getToken()}` },
             body: formData
         });
         const data = await response.json();
@@ -789,11 +827,55 @@ fileInput?.addEventListener("change", async () => {
         messages.querySelector(`[data-message-id="${CSS.escape(localId)}"]`)?.remove();
         showToast("Файл не отправлен", error.message);
     } finally {
-        fileInput.value = "";
-        attachButton.disabled = false;
+        if (attachButton) attachButton.disabled = false;
         fileUploadInProgress = false;
     }
+}
+
+attachButton?.addEventListener("click", () => fileInput?.click());
+fileInput?.addEventListener("change", async () => {
+    const files = Array.from(fileInput.files || []);
+    for (const file of files) await uploadFile(file);
+    fileInput.value = "";
 });
+
+/* Вставка из буфера: скриншоты и картинки по Ctrl+V */
+async function handlePaste(event) {
+    if (!currentChatUser) return;
+    const files = clipboardFiles(event.clipboardData);
+    if (!files.length) return;
+    event.preventDefault();
+    for (const file of files) await uploadFile(file);
+}
+messageInput?.addEventListener("paste", handlePaste);
+document.addEventListener("paste", (event) => {
+    if (event.target === messageInput) return; // уже обработано выше
+    handlePaste(event);
+});
+
+/* Перетаскивание файлов прямо в переписку */
+["dragenter", "dragover"].forEach((type) => {
+    messages?.addEventListener(type, (event) => {
+        if (!currentChatUser) return;
+        event.preventDefault();
+        messages.classList.add("drop-active");
+    });
+});
+messages?.addEventListener("dragleave", (event) => {
+    if (messages.contains(event.relatedTarget)) return;
+    messages.classList.remove("drop-active");
+});
+messages?.addEventListener("drop", async (event) => {
+    if (!currentChatUser) return;
+    event.preventDefault();
+    messages.classList.remove("drop-active");
+    const files = Array.from(event.dataTransfer?.files || []);
+    for (const file of files) await uploadFile(file);
+});
+document.addEventListener("dragover", (event) => event.preventDefault());
+document.addEventListener("drop", (event) => event.preventDefault());
+
+loadUploadLimit();
 
 /* In-chat search */
 function toggleChatSearch(force) {
