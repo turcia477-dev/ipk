@@ -216,15 +216,38 @@ function notifyFriends(userId, event, payload) {
 
 app.get("/", (req, res) => res.sendFile(path.join(PUBLIC_DIR, "index.html")));
 
+/**
+ * Версии зависимостей читаем прямо из node_modules, а не через
+ * require("имя/package.json"): у части пакетов поле exports такой импорт запрещает.
+ * Нужно, чтобы можно было убедиться, что на хостинге стоит именно та версия,
+ * которую обновили, а не старая уязвимая.
+ */
+function depVersion(name) {
+    try {
+        const file = path.join(__dirname, "..", "node_modules", name, "package.json");
+        return JSON.parse(fs.readFileSync(file, "utf8")).version;
+    } catch (error) {
+        return "unknown";
+    }
+}
+
 app.get("/api/status", (req, res) => res.json({
     ok: true,
     server: "ИПК",
-    version: "2.4.0",
+    version: "2.4.1",
     db: "file-json",
     dataDir: db.DATA_DIR,
     persistent: db.PERSISTENT,
     uploadsReady: uploadsReady === null ? fs.existsSync(UPLOADS_DIR) : uploadsReady,
     maxFileSize: MAX_FILE_SIZE,
+    node: process.version,
+    deps: {
+        express: depVersion("express"),
+        socketio: depVersion("socket.io"),
+        multer: depVersion("multer"),
+        bcryptjs: depVersion("bcryptjs")
+    },
+    data: db.getStats(),
     time: new Date().toISOString()
 }));
 

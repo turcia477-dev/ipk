@@ -1,6 +1,6 @@
 {
   "name": "ipk-messenger",
-  "version": "2.4.0",
+  "version": "2.4.1",
   "description": "Приватный мессенджер ИПК для друзей",
   "main": "server/server-sqlite.js",
   "type": "commonjs",
