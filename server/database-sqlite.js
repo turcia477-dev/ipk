@@ -92,30 +92,57 @@ function nowIso() {
 
 /* ---------- Загрузка и сохранение ---------- */
 
-function load() {
+function readStoreFile(file) {
+    if (!fs.existsSync(file)) return null;
+    const raw = fs.readFileSync(file, "utf8");
+    if (!raw.trim()) return null;
+    return JSON.parse(raw);
+}
+
+/**
+ * Повреждённый файл не затираем, а откладываем в сторону.
+ * Иначе одна битая запись означала бы безвозвратную потерю всей переписки.
+ * Расширение .corrupt-… выбрано, чтобы nodemon не принял это за изменение кода.
+ */
+function quarantine(file) {
     try {
-        let source = DB_FILE;
-        if (!fs.existsSync(source) && fs.existsSync(LEGACY_DB_FILE)) source = LEGACY_DB_FILE;
-        if (!fs.existsSync(source)) return;
-        const raw = fs.readFileSync(source, "utf8");
-        if (!raw.trim()) return;
-        const parsed = JSON.parse(raw);
-        const base = emptyState();
-        state = {
-            version: 2,
-            counters: Object.assign(base.counters, parsed.counters || {}),
-            users: parsed.users || {},
-            sessions: parsed.sessions || {},
-            friendRequests: parsed.friendRequests || {},
-            friends: parsed.friends || {},
-            messages: parsed.messages || {}
-        };
-        pruneExpiredSessions();
-        console.log(`Хранилище загружено: ${DB_FILE}`);
+        const target = `${file}.corrupt-${Date.now()}`;
+        fs.renameSync(file, target);
+        console.error(`Повреждённый файл сохранён как ${target}`);
     } catch (error) {
-        console.error("Не удалось прочитать хранилище, начинаю с пустого:", error.message);
-        state = emptyState();
+        console.error(`Не удалось отложить повреждённый файл ${file}: ${error.message}`);
     }
+}
+
+function applyParsed(parsed) {
+    const base = emptyState();
+    state = {
+        version: 2,
+        counters: Object.assign(base.counters, parsed.counters || {}),
+        users: parsed.users || {},
+        sessions: parsed.sessions || {},
+        friendRequests: parsed.friendRequests || {},
+        friends: parsed.friends || {},
+        messages: parsed.messages || {}
+    };
+    pruneExpiredSessions();
+}
+
+function load() {
+    for (const file of [DB_FILE, LEGACY_DB_FILE]) {
+        if (!fs.existsSync(file)) continue;
+        try {
+            const parsed = readStoreFile(file);
+            if (!parsed) continue;
+            applyParsed(parsed);
+            console.log(`Хранилище загружено: ${file}`);
+            return;
+        } catch (error) {
+            console.error(`Не удалось прочитать ${file}: ${error.message}`);
+            quarantine(file);
+        }
+    }
+    state = emptyState();
 }
 
 function flushSync() {

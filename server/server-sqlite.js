@@ -57,15 +57,29 @@ function ensureUploadsDir() {
 
 /* ---------- Приём файлов ---------- */
 
+/**
+ * Браузер отправляет имя файла в UTF-8, а multipart-парсер (busboy 1.x внутри
+ * multer 2.x) читает эти байты как latin1. Из-за этого «скриншот.png»
+ * превращается в «ÑÐºÑÐ¸Ð½ÑÐ¾Ñ.png». Перекодируем обратно.
+ * Если после перекодировки получились символы-заглушки — значит имя и не было
+ * UTF-8, тогда оставляем как есть.
+ */
+function decodeMultipartName(name) {
+    const raw = String(name || "");
+    if (!/[\u0080-\u00ff]/.test(raw)) return raw;
+    const decoded = Buffer.from(raw, "latin1").toString("utf8");
+    return decoded.includes("\uFFFD") ? raw : decoded;
+}
+
 function safeExtension(originalName) {
-    const ext = path.extname(String(originalName || "")).toLowerCase();
+    const ext = path.extname(decodeMultipartName(originalName)).toLowerCase();
     const clean = ext.replace(/[^a-z0-9.]/g, "");
     if (!clean || clean === "." || clean.length > 12) return ".bin";
     return clean;
 }
 
 function displayName(originalName) {
-    const cleaned = String(originalName || "файл")
+    const cleaned = decodeMultipartName(originalName)
         .replace(/[\\/:*?"<>|]/g, "")
         .replace(/[\u0000-\u001f]/g, "")
         .trim()
@@ -205,7 +219,7 @@ app.get("/", (req, res) => res.sendFile(path.join(PUBLIC_DIR, "index.html")));
 app.get("/api/status", (req, res) => res.json({
     ok: true,
     server: "ИПК",
-    version: "2.3.1",
+    version: "2.4.0",
     db: "file-json",
     dataDir: db.DATA_DIR,
     persistent: db.PERSISTENT,

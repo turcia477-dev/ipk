@@ -909,6 +909,14 @@ function connectSocket() {
     socket.on("connect", () => {
         connectionPill.classList.add("hidden");
         socket.emit("presence:get");
+        // Пока связи не было, сообщения могли прийти и остаться незамеченными:
+        // сервер отправляет их только подключённым. Поэтому после подключения
+        // (в том числе повторного) подтягиваем свежий список и переписку.
+        refreshFriends();
+        if (currentChatUser) {
+            loadMessages(currentChatUser.id);
+            markMessagesRead(currentChatUser.id);
+        }
     });
     socket.on("disconnect", (reason) => {
         if (reason !== "io client disconnect") connectionPill.classList.remove("hidden");
