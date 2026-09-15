@@ -249,7 +249,25 @@ function notifyFriends(userId, event, payload) {
 
 /* ---------- Маршруты ---------- */
 
-app.get("/", (req, res) => res.sendFile(path.join(PUBLIC_DIR, "index.html")));
+const APP_VERSION = "2.8.0";
+
+let indexHtmlTemplate = null;
+
+/**
+ * Отдаём страницу, подставляя версию в адреса стилей и скриптов.
+ * Это главная защита от старого кэша: при каждом обновлении адреса файлов
+ * меняются, поэтому браузер физически не может отдать прошлую копию.
+ * Раньше версию в ссылках поднимали руками — и однажды забыли. Из-за этого
+ * новая вёрстка не появлялась, а добавленные темы не применялись при клике.
+ */
+function sendIndex(res, status = 200) {
+    if (indexHtmlTemplate === null) {
+        indexHtmlTemplate = fs.readFileSync(path.join(PUBLIC_DIR, "index.html"), "utf8");
+    }
+    res.status(status).type("html").send(indexHtmlTemplate.split("__APP_VERSION__").join(APP_VERSION));
+}
+
+app.get("/", (req, res) => sendIndex(res));
 
 /**
  * Версии зависимостей читаем прямо из node_modules, а не через
@@ -269,7 +287,7 @@ function depVersion(name) {
 app.get("/api/status", (req, res) => res.json({
     ok: true,
     server: "ИПК",
-    version: "2.7.0",
+    version: APP_VERSION,
     db: "file-json",
     dataDir: db.DATA_DIR,
     persistent: db.PERSISTENT,
@@ -623,7 +641,7 @@ io.on("connection", (socket) => {
 
 app.use((req, res) => {
     if (req.path.startsWith("/api/")) return sendError(res, 404, "Маршрут не найден");
-    res.status(404).sendFile(path.join(PUBLIC_DIR, "index.html"));
+    sendIndex(res, 404);
 });
 
 app.use((error, req, res, next) => {
