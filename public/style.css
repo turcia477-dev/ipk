@@ -332,15 +332,21 @@ kbd { padding: 3px 6px; border: 1px solid var(--border-strong); border-bottom-wi
 .chat-search input { min-width: 0; flex: 1; border: 0; background: transparent; color: var(--text); font-size: 11px; }
 .chat-search > span:not(.search-glyph) { font-size: 9px; }
 .chat-search button { width: 34px; height: 34px; border-radius: 10px; background: transparent; color: var(--muted); font-size: 18px; }
-.messages { min-height: 0; flex: 1; padding: 26px clamp(18px, 5vw, 72px); overflow-y: auto; scroll-behavior: smooth; scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
-.message-row { max-width: min(72%, 680px); margin-top: 8px; display: flex; flex-direction: column; animation: messageIn 0.32s var(--ease) both; }
+/* Диалоговая колонка ограничена по ширине и стоит по центру. Раньше отступы
+   были не больше 72px, поэтому на широком мониторе сообщения уезжали к самым
+   краям и между собеседниками оставался полупустой экран. */
+.messages { min-height: 0; flex: 1; padding: 24px max(18px, calc((100% - 900px) / 2)) 22px; overflow-y: auto; scroll-behavior: smooth; scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
+.message-row { max-width: min(78%, 640px); margin-top: 14px; display: flex; flex-direction: column; animation: messageIn 0.26s var(--ease) both; }
 .message-row.own { margin-left: auto; align-items: flex-end; }
 .message-row.other { margin-right: auto; align-items: flex-start; }
-@keyframes messageIn { from { opacity: 0; transform: translateY(9px) scale(0.98); } to { opacity: 1; transform: none; } }
-.message-bubble { position: relative; padding: 10px 13px 8px; border: 1px solid var(--border); border-radius: 7px 17px 17px 17px; background: var(--surface-solid); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.11); }
-.message-row.own .message-bubble { border-color: rgba(255, 255, 255, 0.09); border-radius: 17px 7px 17px 17px; background: linear-gradient(140deg, var(--accent), color-mix(in srgb, var(--accent-2) 78%, var(--accent))); color: white; box-shadow: 0 10px 28px rgba(var(--accent-rgb), 0.18); }
-.message-text { font-size: 12px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
-.message-meta { margin-top: 5px; display: flex; justify-content: flex-end; align-items: center; gap: 5px; color: var(--muted); font-size: 8px; }
+/* Подряд идущие сообщения одного собеседника жмутся друг к другу: диалог
+   читается плотнее, а смена собеседника всё равно хорошо заметна. */
+.message-row.own + .message-row.own, .message-row.other + .message-row.other { margin-top: 4px; }
+@keyframes messageIn { from { opacity: 0; transform: translateY(6px) scale(0.99); } to { opacity: 1; transform: none; } }
+.message-bubble { position: relative; padding: 10px 14px 8px; border: 1px solid var(--border); border-radius: 7px 17px 17px 17px; background: var(--surface-solid); box-shadow: 0 3px 12px rgba(0, 0, 0, 0.06); }
+.message-row.own .message-bubble { border-color: rgba(255, 255, 255, 0.09); border-radius: 17px 7px 17px 17px; background: linear-gradient(140deg, var(--accent), color-mix(in srgb, var(--accent-2) 78%, var(--accent))); color: white; box-shadow: 0 4px 16px rgba(var(--accent-rgb), 0.13); }
+.message-text { font-size: 13px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
+.message-meta { margin-top: 4px; display: flex; justify-content: flex-end; align-items: center; gap: 5px; color: var(--muted); font-size: 9px; }
 .message-row.own .message-meta { color: rgba(255, 255, 255, 0.7); }
 .read-mark { letter-spacing: -3px; padding-right: 3px; }
 .read-mark.is-read { color: #baf5ff; }
@@ -373,10 +379,10 @@ a.file-download:hover { text-decoration: underline; }
 .message-loader { height: 100%; display: grid; place-content: center; justify-items: center; gap: 12px; color: var(--muted); font-size: 10px; }
 .message-loader i { width: 24px; height: 24px; border: 2px solid var(--border-strong); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.7s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
-.typing-row { height: 28px; padding: 0 clamp(18px, 5vw, 72px); display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 8px; }
+.typing-row { height: 26px; padding: 0 max(18px, calc((100% - 900px) / 2)); display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 9px; }
 .typing-row > span { display: flex; gap: 3px; }.typing-row i { width: 4px; height: 4px; border-radius: 50%; background: var(--accent-2); animation: typing 1s ease-in-out infinite; }.typing-row i:nth-child(2) { animation-delay: .15s; }.typing-row i:nth-child(3) { animation-delay: .3s; }
 @keyframes typing { 0%, 60%, 100% { transform: translateY(0); opacity: .4; } 30% { transform: translateY(-3px); opacity: 1; } }
-.composer { position: relative; padding: 13px 18px calc(15px + env(safe-area-inset-bottom)); display: flex; align-items: flex-end; gap: 8px; border-top: 1px solid var(--border); background: color-mix(in srgb, var(--bg) 80%, transparent); backdrop-filter: blur(22px); }
+.composer { position: relative; padding: 13px max(18px, calc((100% - 900px) / 2)) calc(15px + env(safe-area-inset-bottom)); display: flex; align-items: flex-end; gap: 8px; border-top: 1px solid var(--border); background: color-mix(in srgb, var(--bg) 80%, transparent); backdrop-filter: blur(22px); }
 .composer-button, .send-button { width: 44px; height: 44px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 14px; transition: 0.2s var(--ease); }
 .composer-button { border: 1px solid var(--border); background: var(--surface-soft); color: var(--muted); font-size: 20px; }
 .composer-button:hover { transform: translateY(-2px); color: var(--text); background: var(--surface-hover); }
@@ -444,8 +450,8 @@ body[data-theme="light"] .message-row.own .message-bubble { color: white; }
     .auth-panel { border-left: 0; }
     .mobile-brand { margin-bottom: 38px; display: flex; align-items: center; gap: 11px; }
     .app { grid-template-columns: 310px minmax(0, 1fr); }
-    .messages { padding-inline: 24px; }
-    .typing-row { padding-inline: 24px; }
+    .messages { padding-inline: 18px; }
+    .typing-row { padding-inline: 18px; }
 }
 
 @media (max-width: 680px) {
@@ -458,12 +464,18 @@ body[data-theme="light"] .message-row.own .message-bubble { color: white; }
     .app.mobile-chat-open .sidebar { transform: translateX(-28%); opacity: 0; pointer-events: none; }
     .app.mobile-chat-open .main { transform: translateX(0); opacity: 1; pointer-events: auto; }
     .mobile-back { display: grid; }
-    .chat-header { padding-inline: 10px; }
+    .chat-header { padding-inline: 12px; min-height: 64px; }
     .chat-actions .icon-button:last-child { display: none; }
-    .messages { padding: 18px 12px; }
-    .message-row { max-width: 86%; }
-    .typing-row { padding-inline: 14px; }
-    .composer { padding: 10px 10px calc(10px + env(safe-area-inset-bottom)); }
+    /* На телефоне сообщения шире и текст крупнее — читать с экрана проще,
+       а кнопки увеличены под палец. */
+    .messages { padding: 16px 14px 10px; }
+    .message-row { max-width: 89%; margin-top: 12px; }
+    .message-text { font-size: 14px; line-height: 1.55; }
+    .message-meta { font-size: 9px; }
+    .message-bubble { padding: 9px 13px 7px; }
+    .typing-row { padding-inline: 16px; }
+    .composer { padding: 10px 12px calc(12px + env(safe-area-inset-bottom)); }
+    .composer-button, .send-button { width: 46px; height: 46px; }
     .emoji-picker { left: 10px; bottom: 66px; width: min(282px, calc(100vw - 20px)); }
     .welcome { display: none; }
     .theme-grid { grid-template-columns: repeat(2, 1fr); }
